@@ -31,7 +31,7 @@ flowchart TD
     D -->|no| E["clear standdown marker"]
     D -->|yes| F["write standdown.json<br/>+ one-line warning"]
 
-    subgraph LOOP["/loop /usage-guard-tick · reads the verdict each tick"]
+    subgraph LOOP["your /loop · reads the injected standdown directive each tick"]
         G{"headroom?"}
         G -->|OK| H["continue the goal<br/>~20-min heartbeat"]
         G -->|breach| I["TaskStop teammates if lead<br/>checkpoint roster to resume.json<br/>ScheduleWakeup to reset + grace<br/>do no work"]
