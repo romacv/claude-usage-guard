@@ -2,10 +2,10 @@
 set -e
 
 # usage-guard installer.
-# Installs the detector, Stop hook, and /usage-guard-tick loop command, and
-# wires them into ~/.claude/settings.json idempotently. Depends on the usage
-# cache produced by claude-plan-usage-statusline; if that producer is missing,
-# bootstraps just its refresh script + Stop hook so the guard has data.
+# Installs the detector, Stop hook, cancel helper, and stand-down/resume skill,
+# and wires the hook into ~/.claude/settings.json idempotently. Depends on the
+# usage cache produced by claude-plan-usage-statusline; if that producer is
+# missing, bootstraps just its refresh script + Stop hook so the guard has data.
 
 BASE_URL="https://raw.githubusercontent.com/romacv/claude-usage-guard/main"
 STATUSLINE_URL="https://raw.githubusercontent.com/romacv/claude-plan-usage-statusline/main"
@@ -17,8 +17,9 @@ mkdir -p "$GUARD_DIR" "$SKILL_DIR"
 
 curl -fsSL "$BASE_URL/guard.sh"       -o "$GUARD_DIR/guard.sh"
 curl -fsSL "$BASE_URL/stop-hook.sh"   -o "$GUARD_DIR/stop-hook.sh"
+curl -fsSL "$BASE_URL/cancel.sh"      -o "$GUARD_DIR/cancel.sh"
 curl -fsSL "$BASE_URL/skill/SKILL.md" -o "$SKILL_DIR/SKILL.md"
-chmod +x "$GUARD_DIR/guard.sh" "$GUARD_DIR/stop-hook.sh"
+chmod +x "$GUARD_DIR/guard.sh" "$GUARD_DIR/stop-hook.sh" "$GUARD_DIR/cancel.sh"
 
 # Config: never clobber an existing one (preserves the user's threshold).
 if [ ! -f "$GUARD_DIR/config.json" ]; then
@@ -77,6 +78,7 @@ RUBY
 echo "usage-guard installed."
 echo "  detector:  $GUARD_DIR/guard.sh"
 echo "  config:    $GUARD_DIR/config.json  (stop_at_remaining, windows)"
-echo "  skill:     $SKILL_DIR/SKILL.md     (STANDDOWN + RESUME protocol)"
+echo "  skill:     $SKILL_DIR/SKILL.md     (STANDDOWN + RESUME + CANCEL protocol)"
+echo "  cancel:    $GUARD_DIR/cancel.sh      (cancel a pending stand-down/resume)"
 echo "The Stop hook detects low quota and drives the skill automatically."
 echo "Restart Claude Code to apply the Stop hook."

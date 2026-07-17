@@ -25,10 +25,19 @@ Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verd
 
 ## RESUME — run when the scheduled cron fires
 
-1. **Re-verify.** `bash ~/.claude/usage-guard/guard.sh`. If still `breach:true` (the window hasn't actually reset yet), re-`CronCreate` ~5 min out and stop.
-2. **Notify.** `PushNotification`: `usage-guard: limits reset — resuming lead + <N> teammates.`
-3. **Rehydrate teammates.** Read this session's `resume-<session_id>.json`. For each teammate: re-spawn it (`Agent`, same role/worktree/branch) if its pane died, or `SendMessage` its pending task if it is still alive. Restore the ledger.
-4. **Clean up.** Delete this session's `resume-<session_id>.json` and `standdown-<session_id>.json` only — never another session's files.
-5. **Continue** the batch from where it stood down.
+1. **Cancelled?** If this session's `resume-<session_id>.json` is absent, the stand-down was cancelled (see CANCEL) — do nothing and stop. The cron fired into a no-op; that is expected.
+2. **Re-verify.** `bash ~/.claude/usage-guard/guard.sh`. If still `breach:true` (the window hasn't actually reset yet), re-`CronCreate` ~5 min out and stop.
+3. **Notify.** `PushNotification`: `usage-guard: limits reset — resuming lead + <N> teammates.`
+4. **Rehydrate teammates.** Read this session's `resume-<session_id>.json`. For each teammate: re-spawn it (`Agent`, same role/worktree/branch) if its pane died, or `SendMessage` its pending task if it is still alive. Restore the ledger.
+5. **Clean up.** Delete this session's `resume-<session_id>.json` and `standdown-<session_id>.json` only — never another session's files.
+6. **Continue** the batch from where it stood down.
+
+## CANCEL — abort a pending stand-down on request
+
+Run when the user asks to cancel the resume / not stand down after all.
+
+1. **Drop the checkpoint + mute.** `bash ~/.claude/usage-guard/cancel.sh <session_id>` — clears this session's `standdown-<session_id>.json` + `resume-<session_id>.json` (the status line pause clears) and writes an `off-<session_id>` mute so the session does not immediately stand down again while still in breach.
+2. **Drop the resume cron.** `CronDelete` the one-shot resume job you scheduled in STANDDOWN, if you still hold its id. If you don't, no action is needed — with the checkpoint gone, RESUME aborts at step 1 when the cron fires.
+3. **Re-arm later** by removing the mute: `rm ~/.claude/usage-guard/off-<session_id>`.
 
 Never call the usage API directly — `guard.sh` only reads the cache `claude-plan-usage-statusline` maintains.

@@ -50,7 +50,8 @@ Only the lead and teammates stand down.
 |-----------|------|
 | **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
-| **`usage-guard` skill** | The `STANDDOWN` and `RESUME` protocols the lead executes: notify, stop/rehydrate teammates, checkpoint, schedule and honor the resume cron. |
+| **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, stop/rehydrate teammates, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
+| **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint and mutes it, so a pending resume becomes a no-op and the session stops standing down. |
 
 ## Design notes
 
@@ -105,6 +106,25 @@ continues.
 
 The lead's session must stay open for the resume cron to fire (it is session-only,
 nothing is written to the OS).
+
+## Cancel a pending stand-down
+
+Changed your mind mid-pause? Cancel it:
+
+```sh
+~/.claude/usage-guard/cancel.sh            # list sessions currently standing down
+~/.claude/usage-guard/cancel.sh <id>       # cancel that session
+~/.claude/usage-guard/cancel.sh --all      # cancel every standing-down session
+```
+
+Cancel clears the session's marker + checkpoint (the status line pause disappears)
+and mutes the session, so it won't stand down again while still below the
+threshold. Any resume already scheduled becomes a no-op — with the checkpoint
+gone, the `RESUME` protocol aborts when the cron fires. Re-arm the session later
+by removing its mute: `rm ~/.claude/usage-guard/off-<id>`.
+
+The resume itself is a session-only cron; if you want it gone immediately rather
+than firing into a no-op, ask the lead to `CronDelete` it.
 
 ## Configure
 
