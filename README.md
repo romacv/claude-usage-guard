@@ -51,7 +51,7 @@ Only the lead and teammates stand down.
 | **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
 | **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, stop/rehydrate teammates, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
-| **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint and mutes it, so a pending resume becomes a no-op and the session stops standing down. |
+| **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint and mutes it, so a pending resume becomes a no-op and the session stops standing down. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
 
 ## Design notes
 
@@ -74,6 +74,11 @@ Where the correctness lives:
   and schedule a one-shot `CronCreate` for the reset. The lead then goes idle
   until that single cron fires — no `/loop` to keep alive, nothing written into
   the OS.
+- **Deterministic teardown.** `STANDDOWN` records the resume cron's id in the
+  checkpoint (`resume_cron_id`), so cancelling deletes the exact job instead of
+  guessing or depending on the id surviving a context compaction. The one hard
+  limit is the platform's: session-only crons can be removed only from the window
+  that created them.
 - **One cache producer.** Detection reads the exact cache the status line already
   maintains; usage-guard never duplicates the OAuth call.
 
@@ -123,8 +128,11 @@ threshold. Any resume already scheduled becomes a no-op — with the checkpoint
 gone, the `RESUME` protocol aborts when the cron fires. Re-arm the session later
 by removing its mute: `rm ~/.claude/usage-guard/off-<id>`.
 
-The resume itself is a session-only cron; if you want it gone immediately rather
-than firing into a no-op, ask the lead to `CronDelete` it.
+The resume itself is a session-only cron. `cancel.sh` prints its id (the
+`STANDDOWN` protocol records it in the checkpoint as `resume_cron_id`) so you can
+`CronDelete` it precisely — but only from the window that scheduled it, since
+session-only crons can't be removed from another window. If you'd rather not
+bother, leave it: with the checkpoint gone it just fires into a no-op.
 
 ## Configure
 

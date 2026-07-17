@@ -7,7 +7,7 @@ description: Stand down the lead and every Agent Teams teammate when plan-usage 
 
 The lead orchestrates. Subagents (one-shot Agent-tool runs) are NOT touched — let them finish and return. Only the **lead** and **teammates** stand down and resume.
 
-Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `remaining_5h`, `stop_at_remaining`, `window`, `wake_at_epoch`, `seconds_until_wake`).
+Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `breach`, `remaining_5h`, `stop_at_remaining`, `window`, `wake_at_epoch`, `wake_at_iso`, `seconds_until_wake`).
 
 ## STANDDOWN — run once when the Stop hook flags a breach, then stop
 
@@ -17,10 +17,11 @@ Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verd
    - `SendMessage` to it: `usage-guard standdown: quota low, pausing until ~<resume>. Save state; I'll re-send your task on resume.`
    - Reconcile its ledger entry (no task left `in_progress`).
    - `TaskStop` it.
-4. **Checkpoint.** Write the **session-scoped** roster file the Stop-hook directive gave you — `~/.claude/usage-guard/resume-<session_id>.json`, never a shared `resume.json` (concurrent sessions would clobber each other):
-   `{ "goal": "<batch goal>", "wake_at_epoch": <n>, "teammates": [ { "name": "...", "role": "...", "task": "...", "worktree": "...", "branch": "..." } ] }`
-5. **Schedule the resume** — local, session-only, minute-accurate, single fire:
-   `CronCreate` with `recurring: false`, `cron` pinned to the local minute of `wake_at_epoch` **plus ~1 min** (so it fires AFTER the reset), `prompt: "Invoke the usage-guard skill RESUME protocol; read resume-<session_id>.json."`
+4. **Checkpoint.** Write the **session-scoped** roster file the Stop-hook directive gave you — `~/.claude/usage-guard/resume-<session_id>.json`, never a shared `resume.json` (concurrent sessions would clobber each other). Leave `resume_cron_id` null for now — you fill it in step 5:
+   `{ "goal": "<batch goal>", "wake_at_epoch": <n>, "resume_cron_id": null, "teammates": [ { "name": "...", "role": "...", "task": "...", "worktree": "...", "branch": "..." } ] }`
+5. **Schedule the resume** — local, session-only, minute-accurate, single fire. Read `wake_at_iso` from the verdict (local ISO, e.g. `2026-07-18T01:01:00`) and map it straight to a 5-field cron `minute hour day-of-month month day-of-week`, adding ~1 min so it fires just AFTER the reset (day-of-week stays `*`). **Don't eyeball the format — call it exactly like this** (worked example for `wake_at_iso` = `2026-07-18T01:01:00` → fire 01:02):
+   `CronCreate({ cron: "2 1 18 7 *", recurring: false, prompt: "Invoke the usage-guard skill and run its RESUME protocol. Read ~/.claude/usage-guard/resume-<session_id>.json; if it is absent the stand-down was cancelled — stop. Otherwise re-verify with guard.sh; if still breaching re-schedule ~5 min out, else resume, then delete resume-<session_id>.json + standdown-<session_id>.json." })`
+   Then write the id `CronCreate` returns back into `resume-<session_id>.json` as `resume_cron_id`, so CANCEL can delete the exact job deterministically — even if this conversation is later compacted and the id falls out of context.
 6. **Stop.** Do no further work. The session goes idle until the cron fires — this is what lets the lead itself resume without any OS scheduler.
 
 ## RESUME — run when the scheduled cron fires
@@ -37,7 +38,7 @@ Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verd
 Run when the user asks to cancel the resume / not stand down after all.
 
 1. **Drop the checkpoint + mute.** `bash ~/.claude/usage-guard/cancel.sh <session_id>` — clears this session's `standdown-<session_id>.json` + `resume-<session_id>.json` (the status line pause clears) and writes an `off-<session_id>` mute so the session does not immediately stand down again while still in breach.
-2. **Drop the resume cron.** `CronDelete` the one-shot resume job you scheduled in STANDDOWN, if you still hold its id. If you don't, no action is needed — with the checkpoint gone, RESUME aborts at step 1 when the cron fires.
+2. **Drop the resume cron.** `cancel.sh` prints the checkpoint's `resume_cron_id` before it clears the file — `CronDelete` that exact id, no guessing (or read it from `resume-<session_id>.json` yourself if you skipped `cancel.sh`). Session-only crons can be deleted **only from the window that created them**: from any other window, close that window to kill its cron instead. Either way this is best-effort — with the checkpoint gone, an orphaned cron just fires into a no-op (RESUME aborts at step 1).
 3. **Re-arm later** by removing the mute: `rm ~/.claude/usage-guard/off-<session_id>`.
 
 Never call the usage API directly — `guard.sh` only reads the cache `claude-plan-usage-statusline` maintains.
