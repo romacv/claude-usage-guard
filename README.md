@@ -22,27 +22,26 @@ configuration, so the run does it on its own.
 
 ## How it works
 
-```
-        Stop hook (after every response)
-                 │
-                 ▼
-           guard.sh ──reads──▶ /tmp/claude_usage_cache.json   (produced by
-                 │                                              claude-plan-usage-statusline)
-        remaining = 100 − utilization,  per window (5h, 7d)
-                 │
-        remaining ≤ stop_at_remaining  on an enabled window?
-             │                                   │
-            no                                   yes
-             │                                   │
-      clear marker              write standdown.json + one-line warning
-                                                 │
-   /loop /usage-guard-tick  ◀───── reads the verdict on each tick ─────┐
-             │                                   │                     │
-   headroom OK →                    breach → TaskStop teammates        │
-   continue the goal,               (if lead), checkpoint the roster   │
-   ~20-min heartbeat                to resume.json, ScheduleWakeup to   │
-                                    reset + grace, do no work           │
-             └──── on reset: restore roster, resume the batch ─────────┘
+```mermaid
+flowchart TD
+    P["claude-plan-usage-statusline<br/>refresh-usage-cache.sh"] -. writes cache .-> B
+    A["Stop hook · after every response"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
+    B --> C["remaining = 100 - utilization<br/>per enabled window · default 5h"]
+    C --> D{"remaining ≤<br/>stop_at_remaining?"}
+    D -->|no| E["clear standdown marker"]
+    D -->|yes| F["write standdown.json<br/>+ one-line warning"]
+
+    subgraph LOOP["/loop /usage-guard-tick · reads the verdict each tick"]
+        G{"headroom?"}
+        G -->|OK| H["continue the goal<br/>~20-min heartbeat"]
+        G -->|breach| I["TaskStop teammates if lead<br/>checkpoint roster to resume.json<br/>ScheduleWakeup to reset + grace<br/>do no work"]
+        I -->|on reset| J["restore roster<br/>resume the batch"]
+        J --> G
+        H --> G
+    end
+
+    E -.-> G
+    F -.-> G
 ```
 
 Three small, single-purpose pieces:
