@@ -49,6 +49,14 @@ u5 = util.(fh); u7 = util.(wk)
 rem5 = u5.nil? ? nil : (100 - u5.to_f)
 rem7 = u7.nil? ? nil : (100 - u7.to_f)
 
+# If none of the enabled windows is readable (e.g. the cache holds an API error
+# payload), this is an unknown reading, not a real no-breach. Flag it so the Stop
+# hook leaves any active pause untouched instead of lifting it on a blip.
+readable = windows.map { |w| w == "5h" ? rem5 : (w == "7d" ? rem7 : nil) }.compact
+if readable.empty?
+  emit({"breach" => false, "reason" => "no_data", "remaining_5h" => rem5, "remaining_7d" => rem7, "stop_at_remaining" => stop_at})
+end
+
 breached = []
 if windows.include?("5h") && !rem5.nil? && rem5 <= stop_at
   breached << ["5h", rem5, reset.(fh)]
