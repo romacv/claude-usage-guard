@@ -1,0 +1,5 @@
+*.log
+.DS_Store
+standdown.json
+resume.json
+config.json

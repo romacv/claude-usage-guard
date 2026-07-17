@@ -1,0 +1,6 @@
+{
+  "stop_at_remaining": 10,
+  "resume_grace_seconds": 60,
+  "heartbeat_seconds": 1200,
+  "windows": ["5h"]
+}
