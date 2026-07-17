@@ -24,11 +24,23 @@ VERDICT="$("$DIR/guard.sh" 2>/dev/null)"
 
 SESSION_ID="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["session_id"] rescue "").to_s)' 2>/dev/null)"
 
+# Per-session mute: `off-<session_id>` silences usage-guard for one session only
+# (config is global, so this is how you exempt a single window without disarming
+# the others). Present → do nothing this session.
+SID_SAFE="$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9_-')"
+[ -n "$SID_SAFE" ] && [ -f "$DIR/off-$SID_SAFE" ] && exit 0
+
 VERDICT="$VERDICT" SESSION_ID="$SESSION_ID" ruby -rjson <<'RUBY'
 v = (JSON.parse(ENV["VERDICT"]) rescue {})
 dir = File.expand_path("~/.claude/usage-guard")
-marker = File.join(dir, "standdown.json")
-resume = File.join(dir, "resume.json")
+
+# Session-scope the state so concurrent Claude Code sessions never share one
+# marker/roster. session_id keys the files exactly like the loop-status segment;
+# the usage cache and config stay global (account-wide by nature).
+sid = ENV["SESSION_ID"].to_s.gsub(/[^A-Za-z0-9_-]/, "")
+suffix = sid.empty? ? "" : "-#{sid}"
+marker = File.join(dir, "standdown#{suffix}.json")
+resume = File.join(dir, "resume#{suffix}.json")
 
 unless v["breach"]
   File.delete(marker) if v["reason"].nil? && File.exist?(marker)
@@ -59,9 +71,10 @@ unless File.exist?(resume)
     "additionalContext" =>
       "usage-guard BREACH: 5h headroom #{pct.(v["remaining_5h"])}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
       "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then stop the lead and " \
-      "every Agent Teams teammate (SendMessage each, then TaskStop), checkpoint the roster + goal to " \
-      "~/.claude/usage-guard/resume.json, and CronCreate a one-shot resume for ~1 min after the reset at #{resume_at} " \
-      "whose prompt invokes the usage-guard RESUME protocol. Let running subagents finish; do not touch them. " \
+      "every Agent Teams teammate (SendMessage each, then TaskStop), checkpoint THIS session's roster + goal to " \
+      "#{resume} (session-scoped — use exactly this path, never a shared one), and CronCreate a one-shot resume for " \
+      "~1 min after the reset at #{resume_at} whose prompt runs the usage-guard RESUME protocol reading #{resume} and " \
+      "deleting #{resume} + #{marker} on completion. Let running subagents finish; do not touch them. " \
       "Then STOP and stay idle until the cron fires. Reply one line: paused, resume #{resume_at}."
   }
 end
