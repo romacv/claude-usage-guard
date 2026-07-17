@@ -11,13 +11,13 @@ BASE_URL="https://raw.githubusercontent.com/romacv/claude-usage-guard/main"
 STATUSLINE_URL="https://raw.githubusercontent.com/romacv/claude-plan-usage-statusline/main"
 CLAUDE_DIR="$HOME/.claude"
 GUARD_DIR="$CLAUDE_DIR/usage-guard"
-CMD_DIR="$CLAUDE_DIR/commands"
+SKILL_DIR="$CLAUDE_DIR/skills/usage-guard"
 
-mkdir -p "$GUARD_DIR" "$CMD_DIR"
+mkdir -p "$GUARD_DIR" "$SKILL_DIR"
 
-curl -fsSL "$BASE_URL/guard.sh"                 -o "$GUARD_DIR/guard.sh"
-curl -fsSL "$BASE_URL/stop-hook.sh"             -o "$GUARD_DIR/stop-hook.sh"
-curl -fsSL "$BASE_URL/commands/usage-guard-tick.md" -o "$CMD_DIR/usage-guard-tick.md"
+curl -fsSL "$BASE_URL/guard.sh"       -o "$GUARD_DIR/guard.sh"
+curl -fsSL "$BASE_URL/stop-hook.sh"   -o "$GUARD_DIR/stop-hook.sh"
+curl -fsSL "$BASE_URL/skill/SKILL.md" -o "$SKILL_DIR/SKILL.md"
 chmod +x "$GUARD_DIR/guard.sh" "$GUARD_DIR/stop-hook.sh"
 
 # Config: never clobber an existing one (preserves the user's threshold).
@@ -77,5 +77,6 @@ RUBY
 echo "usage-guard installed."
 echo "  detector:  $GUARD_DIR/guard.sh"
 echo "  config:    $GUARD_DIR/config.json  (stop_at_remaining, windows)"
-echo "  loop:      /loop /usage-guard-tick <your work goal>"
+echo "  skill:     $SKILL_DIR/SKILL.md     (STANDDOWN + RESUME protocol)"
+echo "The Stop hook detects low quota and drives the skill automatically."
 echo "Restart Claude Code to apply the Stop hook."

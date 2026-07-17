@@ -1,88 +1,83 @@
 # usage-guard
 
 **A plan-usage guardrail for [Claude Code](https://code.claude.com/docs).** When
-your five-hour or weekly headroom runs low, usage-guard makes the session *stand
-down* — and, if it is an Agent Teams lead, pauses the whole roster — then wakes
-itself one minute after the limit resets and picks the work back up.
+your five-hour headroom runs low, usage-guard stands the **lead and every Agent
+Teams teammate** down, sends a notification, and schedules an automatic resume one
+minute after the limit resets — then wakes and picks the batch back up.
 
-It is built entirely from Claude Code's own primitives — a **Stop hook** for
-detection and a dynamic **`/loop`** for the stand-down / resume cycle. No daemon,
-no OS cron, no background process to babysit.
+Built entirely from Claude Code's own primitives — a **Stop hook** for detection,
+a **skill** for the stand-down / resume protocol, and a one-shot **cron** for the
+timed resume. No daemon, no OS scheduler, no background process to babysit.
 
 ---
 
 ## Why
 
-Long autonomous runs (overnight batches, agent teams, `/loop` jobs) don't fail
-gracefully when they hit a rate limit — they stall mid-task, burn the last of a
-window on a half-finished edit, or sit idle for hours past a reset that already
-happened. The disciplined thing is to **stop early, checkpoint, and resume the
-moment the window reopens.** usage-guard encodes exactly that discipline as
-configuration, so the run does it on its own.
+Long autonomous runs — overnight batches, agent teams — don't fail gracefully at a
+rate limit. They stall mid-task, burn the last of a window on a half-finished
+edit, or sit idle for hours past a reset that already happened. The disciplined
+thing is to **stop early, checkpoint, notify, and resume the moment the window
+reopens.** usage-guard encodes that discipline so the run does it on its own.
 
 ## How it works
 
 ```mermaid
 flowchart TD
     P["claude-plan-usage-statusline<br/>refresh-usage-cache.sh"] -. writes cache .-> B
-    A["Stop hook · after every response"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
-    B --> C["remaining = 100 - utilization<br/>per enabled window · default 5h"]
-    C --> D{"remaining ≤<br/>stop_at_remaining?"}
-    D -->|no| E["clear standdown marker"]
-    D -->|yes| F["write standdown.json<br/>+ one-line warning"]
+    A["Stop hook · after every lead response"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
+    B --> C{"remaining ≤ stop_at_remaining?<br/>(5h window)"}
+    C -->|no| E["clear standdown marker"]
+    C -->|yes, standdown already running| W["warn only<br/>(latched by resume.json)"]
+    C -->|yes, new| F["write marker + warn<br/>inject STANDDOWN directive"]
 
-    subgraph LOOP["your /loop · reads the injected standdown directive each tick"]
-        G{"headroom?"}
-        G -->|OK| H["continue the goal<br/>~20-min heartbeat"]
-        G -->|breach| I["TaskStop teammates if lead<br/>checkpoint roster to resume.json<br/>ScheduleWakeup to reset + grace<br/>do no work"]
-        I -->|on reset| J["restore roster<br/>resume the batch"]
-        J --> G
-        H --> G
-    end
+    F --> G["lead runs the usage-guard skill · STANDDOWN"]
+    G --> N1["PushNotification"]
+    G --> T["SendMessage + TaskStop<br/>every teammate"]
+    G --> R["checkpoint roster + goal<br/>→ resume.json"]
+    G --> K["CronCreate one-shot<br/>at reset + grace"]
+    G --> S["lead STOPs — idle until cron"]
 
-    E -.-> G
-    F -.-> G
+    K -.fires after reset.-> Z["lead runs the usage-guard skill · RESUME"]
+    Z --> N2["PushNotification"]
+    Z --> RH["re-send / re-spawn teammates<br/>from resume.json"]
+    Z --> CO["continue the batch"]
 ```
 
-Three small, single-purpose pieces:
+Subagents (one-shot `Agent`-tool runs) are left alone — they finish and return.
+Only the lead and teammates stand down.
 
 | Component | Role |
 |-----------|------|
-| **`guard.sh`** | Pure *reader* of the usage cache. Computes remaining headroom per window and emits a JSON verdict. Never calls the API. |
-| **`stop-hook.sh`** | Runs on the Stop hook. Writes/clears the `standdown.json` marker and surfaces a warning — so even a plain session (no loop) is told when it's low. |
-| **`/usage-guard-tick`** | The `/loop` body. Works while there's headroom; on breach, stands the team down and reschedules to the reset. |
+| **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
+| **`stop-hook.sh`** | On the Stop hook: writes/clears the `standdown.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
+| **`usage-guard` skill** | The `STANDDOWN` and `RESUME` protocols the lead executes: notify, stop/rehydrate teammates, checkpoint, schedule and honor the resume cron. |
 
 ## Design notes
 
-A few decisions worth calling out, because they're where the correctness lives:
+Where the correctness lives:
 
-- **Fail-open, never fail-closed.** A missing or malformed cache yields
-  `breach:false`. A monitoring layer that halts your work because it couldn't
-  read a temp file is worse than no monitor — usage-guard degrades to a no-op,
-  matching how the status line shows `?` rather than a misleading `100%`.
-- **Session-first, weekly opt-in.** The five-hour window is the one that governs
-  a working session, so it's the default (`"windows": ["5h"]`) — it resets on a
-  short horizon, so stand-downs are brief and the resume lands the same day. The
-  seven-day window is a separate concern with a days-long reset; watch it only if
-  you deliberately want to stop on the weekly cap (`["5h", "7d"]`). When more than
-  one window is breached, the wake targets the *later* reset — you only regain
-  headroom once the slowest breached window reopens.
-- **Clamp-aware rescheduling.** `ScheduleWakeup` caps a delay at one hour, but a
-  reset can be further out. In stand-down the loop hops in ≤1h steps, re-checking
-  and doing no work each time, until the window has actually reset — arbitrarily
-  long waits with periodic quiet re-checks, no drift.
+- **Fail-open, never fail-closed.** A missing, malformed, or rate-limited cache
+  yields `breach:false` with a `reason`, and the hook leaves any active pause
+  untouched. A monitor that halts your work because it couldn't read a temp file
+  is worse than no monitor.
+- **Fire once per standdown.** The injected directive is latched by `resume.json`:
+  the hook drives the skill only when a standdown isn't already in progress, so a
+  breach that persists across responses never busy-loops the lead.
+- **Self-resume without an OS scheduler.** `additionalContext` on the Stop hook
+  continues the conversation exactly once, giving the lead a turn to stand down
+  and schedule a one-shot `CronCreate` for the reset. The lead then goes idle
+  until that single cron fires — no `/loop` to keep alive, nothing written into
+  the OS.
 - **One cache producer.** Detection reads the exact cache the status line already
-  maintains; usage-guard never duplicates the OAuth call. Two Stop hooks sharing
-  one debounced producer, not two pollers racing the API.
+  maintains; usage-guard never duplicates the OAuth call.
 
 ## Dependency
 
-usage-guard consumes `/tmp/claude_usage_cache.json`, which is produced by
+usage-guard consumes `/tmp/claude_usage_cache.json`, produced by
 [claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline)'s
-`refresh-usage-cache.sh`. If it's already installed, usage-guard reuses it; if
-not, the installer bootstraps just that one script and its Stop hook. Installing
-the full status line is recommended — it renders the same headroom, live, in your
-terminal.
+`refresh-usage-cache.sh`. If it's installed, usage-guard reuses it; if not, the
+installer bootstraps just that one script and its Stop hook. The status line also
+renders the pause live: `⏸paused by 5h limit, resume 20:01`.
 
 **Requirements:** macOS · Ruby (system Ruby is fine) · Claude Code, authenticated.
 
@@ -92,28 +87,19 @@ terminal.
 curl -fsSL https://raw.githubusercontent.com/romacv/claude-usage-guard/main/install.sh | sh
 ```
 
-Restart Claude Code so the Stop hook loads.
+Restart Claude Code so the Stop hook and skill load.
 
 ## Use
 
-Start your work under the guardrail loop, passing what to keep doing:
+Nothing to invoke. Run your work — including an Agent Teams batch — as usual. The
+Stop hook watches headroom after every response; when it crosses the threshold the
+lead automatically notifies, stands itself and every teammate down, checkpoints,
+and schedules the resume. One minute after the 5h limit resets the cron fires, the
+lead re-sends each teammate its task (or re-spawns a dead pane), and the batch
+continues.
 
-```
-/loop /usage-guard-tick finish the DEV-1976 refactor and keep the tests green
-```
-
-While there's headroom it advances the goal on a ~20-minute heartbeat. When
-headroom hits the threshold it stands down — pausing any teammates and
-checkpointing them — then wakes one minute after the reset and resumes from where
-it left off.
-
-### With Agent Teams
-
-Run the loop in the **lead** session. On breach the lead `TaskStop`s every
-teammate and records the roster, the task ledger, and the goal to `resume.json`,
-reconciling the ledger so no task is left mid-flight. After the reset it
-re-sends each teammate its pending task (or re-spawns a dead pane) and resumes
-the batch. Plain single sessions get the same stand-down without the roster step.
+The lead's session must stay open for the resume cron to fire (it is session-only,
+nothing is written to the OS).
 
 ## Configure
 
@@ -122,22 +108,19 @@ the batch. Plain single sessions get the same stand-down without the roster step
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `stop_at_remaining` | `10` | Stand down when remaining headroom (%) falls to this or below. |
-| `resume_grace_seconds` | `60` | Wake this many seconds after the reset. |
-| `heartbeat_seconds` | `1200` | Cadence between work ticks while healthy. |
+| `resume_grace_seconds` | `60` | Resume this many seconds after the reset. |
 | `windows` | `["5h"]` | Which limit windows to watch. Add `"7d"` to also stop on the weekly cap. |
 
-Threshold can also be overridden per-run: `USAGE_GUARD_STOP_AT=80`.
+Per-run threshold override: `USAGE_GUARD_STOP_AT=80`.
 
-**Trying it out.** To force a breach on demand, raise the threshold above your
-current remaining and watch only the near-term window, so the wake target stays
-hours away rather than days:
+**Trying it out.** Force a breach on demand by raising the threshold above your
+current remaining:
 
 ```sh
-printf '{"stop_at_remaining":65,"windows":["5h"]}' > ~/.claude/usage-guard/config.json
-~/.claude/usage-guard/guard.sh          # inspect the verdict
+USAGE_GUARD_STOP_AT=90 ~/.claude/usage-guard/guard.sh   # inspect the verdict
 ```
 
-For production, watch the 5h window with a tight `stop_at_remaining` (e.g. `10`).
+For production, keep a tight `stop_at_remaining` (e.g. `10`).
 
 ## Uninstall
 
@@ -145,7 +128,8 @@ For production, watch the 5h window with a tight `stop_at_remaining` (e.g. `10`)
 curl -fsSL https://raw.githubusercontent.com/romacv/claude-usage-guard/main/uninstall.sh | sh
 ```
 
-Removes usage-guard and its Stop hook; leaves the shared cache producer in place.
+Removes usage-guard, its skill, and its Stop hook; leaves the shared cache
+producer in place.
 
 ## License
 

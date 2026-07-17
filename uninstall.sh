@@ -8,6 +8,7 @@ CLAUDE_DIR="$HOME/.claude"
 GUARD_DIR="$CLAUDE_DIR/usage-guard"
 
 rm -rf "$GUARD_DIR"
+rm -rf "$CLAUDE_DIR/skills/usage-guard"
 rm -f "$CLAUDE_DIR/commands/usage-guard-tick.md"
 
 ruby - <<'RUBY'
