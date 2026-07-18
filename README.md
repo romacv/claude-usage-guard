@@ -32,7 +32,7 @@ flowchart TD
 
     F --> G["lead runs the usage-guard skill · STANDDOWN"]
     G --> N1["PushNotification"]
-    G --> T["SendMessage + TaskStop<br/>every teammate"]
+    G --> T["SendMessage each teammate<br/>pause — pane stays alive"]
     G --> R["checkpoint roster + goal<br/>→ resume-&lt;session_id&gt;.json"]
     G --> K["CronCreate one-shot<br/>at reset + grace"]
     G --> S["lead STOPs — idle until cron"]
@@ -50,7 +50,7 @@ Only the lead and teammates stand down.
 |-----------|------|
 | **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
-| **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, stop/rehydrate teammates, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
+| **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, pause/rehydrate teammates, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
 | **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint and mutes it, so a pending resume becomes a no-op and the session stops standing down. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
 
 ## Design notes
@@ -81,6 +81,19 @@ Where the correctness lives:
   that created them.
 - **One cache producer.** Detection reads the exact cache the status line already
   maintains; usage-guard never duplicates the OAuth call.
+- **Pause, don't kill.** A stand-down keeps every teammate's pane alive and idle,
+  never `TaskStop` — a live pane resumes from its own transcript, so no in-context
+  work is lost. `TaskStop` is a fallback only for an already-dead pane.
+- **Teammates stand themselves down too.** A teammate's own Stop hook fires on
+  breach (detected via `CLAUDE_CODE_CHILD_SESSION`); it pauses itself, sends one
+  note to the lead, and idles — never running the lead's notify/cron/checkpoint,
+  and latched on its own marker flag so it never busy-loops.
+- **Deferring costs you.** Ignore the warning and keep prompting past the limit and
+  each request pushes the scheduled resume +5 min — you are burning quota that
+  delays the real reset, so the estimate moves with it. Frozen once you stand down.
+- **The pause badge self-expires.** The status line hides `⏸paused …` once the wake
+  time is safely past even if no resume ran, and the hook reaps orphaned markers an
+  hour past their wake — a stood-down idle session can't freeze a stale time forever.
 
 ## Dependency
 
