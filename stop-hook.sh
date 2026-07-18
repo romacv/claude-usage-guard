@@ -12,10 +12,10 @@
 #     scheduler needed;
 #   - breach, standdown already in progress (resume.json exists): warns only, so
 #     the injected directive fires once per standdown, never in a busy loop;
-#   - breach in a TEAMMATE session (CLAUDE_CODE_CHILD_SESSION=1): injects the
-#     lighter TEAMMATE directive instead (pause self, one SendMessage to the lead,
-#     idle — never the lead's PushNotification/CronCreate/checkpoint), latched on
-#     the marker's teammate_notified flag so it fires once, not every turn end.
+#   - breach in a TEAMMATE session (a claude ancestor carries --agent-id): injects
+#     the lighter TEAMMATE directive instead (pause self, one SendMessage to the
+#     lead, idle — never the lead's PushNotification/CronCreate/checkpoint), latched
+#     on the marker's teammate_notified flag so it fires once, not every turn end.
 #
 # The marker is cleared only on a DEFINITE no-breach; an unknown reading
 # (no_cache/bad_cache/no_data) leaves any active pause untouched. Never blocks.
@@ -34,14 +34,28 @@ SESSION_ID="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read
 SID_SAFE="$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9_-')"
 [ -n "$SID_SAFE" ] && [ -f "$DIR/off-$SID_SAFE" ] && exit 0
 
-# Teammate detection: an Agent-Teams teammate is a child CLI process, so the hook
-# (its own child) inherits CLAUDE_CODE_CHILD_SESSION=1. The Stop-hook stdin carries
-# NO agent/team fields, so this env var is the only in-hook signal (undocumented,
-# verified v2.1.212; if it ever vanishes we regress to lead-path behavior, not
-# worse). stop_hook_active guards against self-amplification on a hook-continued
-# turn — a cheap extra brake on both paths.
+# Teammate detection. An Agent-Teams teammate CLI is launched with
+# `--agent-id <name>@session-<sid>` in its argv; a lead is not. The Stop-hook stdin
+# carries no agent/team fields and the environment can't tell them apart, so the
+# hook walks up its own process ancestry and looks for a claude process carrying
+# --agent-id.
+#
+# Do NOT use CLAUDE_CODE_CHILD_SESSION for this: it is 1 for a teammate CLI *and*
+# for any bridge / remote-controlled lead (the child of a claude.ai bridge session).
+# A remote-controlled lead — the normal setup here — was therefore misdetected as a
+# teammate, took the teammate branch, and never ran the real STANDDOWN (no
+# checkpoint, no resume cron → nothing resumed). argv --agent-id is true for
+# teammates ONLY; with no ancestor carrying it we fall back to the lead path.
+# stop_hook_active still guards self-amplification on a hook-continued turn.
 IS_TEAMMATE=0
-[ "${CLAUDE_CODE_CHILD_SESSION:-}" = "1" ] && IS_TEAMMATE=1
+_pid="$PPID"
+for _ in 1 2 3 4 5 6; do
+  { [ -n "$_pid" ] && [ "$_pid" -gt 1 ]; } 2>/dev/null || break
+  case "$(ps -o command= -p "$_pid" 2>/dev/null)" in
+    *--agent-id*) IS_TEAMMATE=1; break ;;
+  esac
+  _pid="$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')"
+done
 STOP_ACTIVE="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts(((JSON.parse(STDIN.read)["stop_hook_active"] rescue false) == true) ? "1" : "0")' 2>/dev/null)"
 
 VERDICT="$VERDICT" SESSION_ID="$SESSION_ID" IS_TEAMMATE="$IS_TEAMMATE" STOP_ACTIVE="$STOP_ACTIVE" ruby -rjson <<'RUBY'

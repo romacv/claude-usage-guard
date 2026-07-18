@@ -85,7 +85,8 @@ Where the correctness lives:
   never `TaskStop` — a live pane resumes from its own transcript, so no in-context
   work is lost. `TaskStop` is a fallback only for an already-dead pane.
 - **Teammates stand themselves down too.** A teammate's own Stop hook fires on
-  breach (detected via `CLAUDE_CODE_CHILD_SESSION`); it pauses itself, sends one
+  breach (detected by the `--agent-id` its CLI carries, so a remote-controlled
+  lead is never mistaken for one); it pauses itself, sends one
   note to the lead, and idles — never running the lead's notify/cron/checkpoint,
   and latched on its own marker flag so it never busy-loops.
 - **Deferring costs you.** Ignore the warning and keep prompting past the limit and
