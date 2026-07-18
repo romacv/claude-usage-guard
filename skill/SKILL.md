@@ -1,9 +1,16 @@
 ---
 name: usage-guard
-description: Stand down the lead and every Agent Teams teammate when plan-usage headroom is low, notify, and schedule an automatic resume one minute after the limit resets. The STANDDOWN protocol is triggered automatically by the usage-guard Stop hook on breach; the RESUME protocol is triggered by the one-shot cron the standdown schedules.
+description: CLAUDE CODE ONLY. Stand down the lead and every Agent Teams teammate when plan-usage headroom is low, notify, and schedule an automatic resume one minute after the limit resets. The STANDDOWN protocol is triggered automatically by the usage-guard Stop hook on breach; the RESUME protocol is triggered by the one-shot cron the standdown schedules.
 ---
 
 # usage-guard: quota stand-down & resume
+
+> **Claude Code only.** This skill sits in the shared tree because the tree is shared
+> by all three runtimes, but only Claude Code can execute it: it depends on
+> `~/.claude/usage-guard/` (`guard.sh`, `cancel.sh`, the Stop hook), on `CronCreate`,
+> `PushNotification`, `TaskList`/`TaskGet`, and on Agent Teams panes. **If you are
+> Codex or Antigravity, skip this skill** — report the quota limit to the User as a
+> blocker and do not reimplement the protocol with your own primitives.
 
 The lead orchestrates. Subagents (one-shot Agent-tool runs) are NOT touched — let them finish and return. Only the **lead** and **teammates** stand down and resume.
 
