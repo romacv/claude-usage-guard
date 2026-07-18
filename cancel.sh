@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # usage-guard: cancel a pending stand-down / resume.
 #
-# Clears a session's stand-down marker + resume checkpoint and mutes that session
-# so it will not immediately stand down again while still in breach. Effect:
+# Clears a session's stand-down marker + resume checkpoint. Effect:
 #   - the status line pause segment clears (its marker is gone);
 #   - any scheduled resume becomes a no-op — the RESUME protocol aborts when its
-#     checkpoint is absent, so the cron fires into nothing;
-#   - an `off-<session_id>` mute is dropped, so the next Stop hook does nothing
-#     for that session (remove the mute to re-arm: rm ~/.claude/usage-guard/off-*).
+#     checkpoint is absent, so the cron fires into nothing.
+# NOTE: there is NO mute mechanism — the usage-guard is always armed. If the
+# session is still in breach, the next Stop hook stands down again (graceful
+# pause + auto-resume); cancel does not and cannot silence the guard.
 #
 # Usage:
 #   cancel.sh                list sessions currently standing down
@@ -47,8 +47,7 @@ cancel_one() {
   [ -n "$safe" ] || { echo "cancel: invalid session id" >&2; return 1; }
   cid="$(cron_id_for "$safe")"
   rm -f "$DIR/standdown-$safe.json" "$DIR/resume-$safe.json"
-  : > "$DIR/off-$safe"
-  echo "cancelled $safe — state cleared, muted (off-$safe; rm to re-arm)"
+  echo "cancelled $safe — state cleared"
   [ -n "$cid" ] && echo "  its resume cron was $cid — CronDelete it from that window (session-only crons can't be removed cross-window)"
   return 0
 }

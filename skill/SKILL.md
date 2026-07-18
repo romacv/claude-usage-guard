@@ -47,8 +47,8 @@ The lead's STANDDOWN above still messages every teammate as a backstop, in case 
 
 Run when the user asks to cancel the resume / not stand down after all.
 
-1. **Drop the checkpoint + mute.** `bash ~/.claude/usage-guard/cancel.sh <session_id>` — clears this session's `standdown-<session_id>.json` + `resume-<session_id>.json` (the status line pause clears) and writes an `off-<session_id>` mute so the session does not immediately stand down again while still in breach.
+1. **Drop the checkpoint.** `bash ~/.claude/usage-guard/cancel.sh <session_id>` — clears this session's `standdown-<session_id>.json` + `resume-<session_id>.json` (the status line pause clears). There is NO mute: the guard stays armed, so if the session is still in breach the next Stop hook stands down again — intended, the guard cannot be silenced. Cancel is only durable once the breach has actually passed.
 2. **Drop the resume cron.** `cancel.sh` prints the checkpoint's `resume_cron_id` before it clears the file — `CronDelete` that exact id, no guessing (or read it from `resume-<session_id>.json` yourself if you skipped `cancel.sh`). Session-only crons can be deleted **only from the window that created them**: from any other window, close that window to kill its cron instead. Either way this is best-effort — with the checkpoint gone, an orphaned cron just fires into a no-op (RESUME aborts at step 1).
-3. **Re-arm later** by removing the mute: `rm ~/.claude/usage-guard/off-<session_id>`.
+3. **No re-arm step** — there is no mute to remove; the guard is always armed.
 
 Never call the usage API directly — `guard.sh` only reads the cache `claude-plan-usage-statusline` maintains.

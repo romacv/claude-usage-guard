@@ -28,12 +28,6 @@ VERDICT="$("$DIR/guard.sh" 2>/dev/null)"
 
 SESSION_ID="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["session_id"] rescue "").to_s)' 2>/dev/null)"
 
-# Per-session mute: `off-<session_id>` silences usage-guard for one session only
-# (config is global, so this is how you exempt a single window without disarming
-# the others). Present → do nothing this session.
-SID_SAFE="$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9_-')"
-[ -n "$SID_SAFE" ] && [ -f "$DIR/off-$SID_SAFE" ] && exit 0
-
 # Teammate detection. An Agent-Teams teammate CLI is launched with
 # `--agent-id <name>@session-<sid>` in its argv; a lead is not. The Stop-hook stdin
 # carries no agent/team fields and the environment can't tell them apart, so the
