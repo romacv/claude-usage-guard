@@ -14,12 +14,12 @@ description: CLAUDE CODE ONLY. Stand down the lead and every Agent Teams teammat
 
 The lead orchestrates. Subagents (one-shot Agent-tool runs) are NOT touched — let them finish and return. Only the **lead** and **teammates** stand down and resume.
 
-Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `breach`, `remaining_5h`, `stop_at_remaining`, `window`, `wake_at_epoch`, `wake_at_iso`, `seconds_until_wake`).
+Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `breach`, `window` (`5h`, `7d`, or `5h+7d`), `remaining_5h`, `remaining_7d`, `stop_at_remaining`, `wake_at_epoch`, `wake_at_iso`, `seconds_until_wake`).
 
 ## STANDDOWN — run once when the Stop hook flags a breach, then stop
 
 1. **Numbers.** Take `resume` from **this session's stand-down marker** `~/.claude/usage-guard/standdown-<session_id>.json` — its `wake_at_epoch`/`wake_at_iso` already include any **deferral push** (+5 min per breach warning you ignored before standing down), so the cron lands on the real, pushed time, not a fresh guard.sh reading. Compute `resume` = local `HH:MM` (add the date if not today) of that `wake_at_epoch`, and `N` = count of active teammates (`TaskList` → distinct named owners). (The injected Stop-hook directive already states this pushed `resume` — use it.)
-2. **Notify.** `PushNotification` (status `proactive`): `usage-guard: 5h <rem>% <= <limit>% — standing down lead + <N> teammates, resume <resume>`.
+2. **Notify.** `PushNotification` (status `proactive`): `usage-guard: <window> <rem>% <= <limit>% — standing down lead + <N> teammates, resume <resume>` — take `<window>` and its remaining from the marker's `window`/`remaining_*` (the breached window, not always `5h`).
 3. **Teammates — pause, don't kill.** A quota limit is not death: keep each teammate's pane **alive and idle** so on resume it continues from its own transcript, never a lossy re-spawn from the checkpoint summary. For each active teammate:
    - `SendMessage` to it: `usage-guard standdown: quota low, pausing until ~<resume>. Finish your current turn, save state, then go idle — do NOT start new work. I'll re-send your task on resume.`
    - `TaskGet` its current task and capture the FULL state — subject, description, progress so far — into the checkpoint's `task` field (a name alone is not enough): if the pane dies before resume, the fallback re-spawn can only paste back what the checkpoint holds.

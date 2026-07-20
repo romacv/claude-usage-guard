@@ -28,7 +28,7 @@ stop_env = ENV["USAGE_GUARD_STOP_AT"]
 cfg = (File.exist?(config) ? (JSON.parse(File.read(config)) rescue {}) : {})
 stop_at   = (stop_env || cfg["stop_at_remaining"] || 10).to_f
 grace     = (cfg["resume_grace_seconds"] || 60).to_i
-windows   = cfg["windows"] || ["5h", "7d"]
+windows   = cfg["windows"] || ["5h"]
 
 def emit(h); puts JSON.generate(h); exit 0; end
 

@@ -140,8 +140,18 @@ clock = lambda do |epoch|
 end
 resume_at = clock.(v["wake_at_epoch"])
 
+# Report the window that actually breached, not a hardcoded "5h". guard.sh emits
+# window as "5h", "7d", or "5h+7d"; show that label and the remaining headroom of
+# the tightest breached window, so a weekly-cap stand-down never reads as a 5h one.
+win = v["window"].to_s
+label = win.empty? ? "usage" : win
+breached_rems = []
+breached_rems << v["remaining_5h"] if win.include?("5h")
+breached_rems << v["remaining_7d"] if win.include?("7d")
+brem = breached_rems.compact.min
+
 out = {
-  "systemMessage" => "usage-guard: 5h headroom #{pct.(v["remaining_5h"])}% <= #{pct.(v["stop_at_remaining"])}% limit -- paused, resume #{resume_at}."
+  "systemMessage" => "usage-guard: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit -- paused, resume #{resume_at}."
 }
 
 # Inject exactly one directive per breach episode, latched so it never busy-loops.
@@ -154,7 +164,7 @@ if is_teammate
     out["hookSpecificOutput"] = {
       "hookEventName" => "Stop",
       "additionalContext" =>
-        "usage-guard BREACH (teammate): 5h headroom #{pct.(v["remaining_5h"])}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
+        "usage-guard BREACH (teammate): #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
         "You are a spawned teammate — do the TEAMMATE stand-down, NOT the lead protocol: finish this turn, take no new " \
         "work, and do NOT self-TaskStop (keep your pane alive so the lead resumes you from this transcript). Send ONE " \
         "SendMessage to the lead: 'paused — approaching quota limit; idle, holding state, awaiting your resume.' Then " \
@@ -165,7 +175,7 @@ elsif !File.exist?(resume) && !stop_active
   out["hookSpecificOutput"] = {
     "hookEventName" => "Stop",
     "additionalContext" =>
-      "usage-guard BREACH: 5h headroom #{pct.(v["remaining_5h"])}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
+      "usage-guard BREACH: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
       "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then PAUSE the team WITHOUT " \
       "killing it — SendMessage each Agent Teams teammate to finish its turn, save state, and go idle, and LEAVE ITS " \
       "PANE ALIVE. Do NOT TaskStop teammates: a live pane resumes from its own transcript on RESUME; TaskStop only a " \
