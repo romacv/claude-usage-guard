@@ -1,9 +1,9 @@
 # usage-guard
 
 **A plan-usage guardrail for [Claude Code](https://code.claude.com/docs).** When
-your five-hour headroom runs low, usage-guard stands the **lead and every Agent
-Teams teammate** down, sends a notification, and schedules an automatic resume one
-minute after the limit resets — then wakes and picks the batch back up.
+your five-hour headroom runs low, usage-guard stands the **lead session** down,
+sends a notification, and schedules an automatic resume one minute after the
+limit resets — then wakes and picks the work back up.
 
 Built entirely from Claude Code's own primitives — a **Stop hook** for detection,
 a **skill** for the stand-down / resume protocol, and a one-shot **cron** for the
@@ -32,25 +32,23 @@ flowchart TD
 
     F --> G["lead runs the usage-guard skill · STANDDOWN"]
     G --> N1["PushNotification"]
-    G --> T["SendMessage each teammate<br/>pause — pane stays alive"]
-    G --> R["checkpoint roster + goal<br/>→ resume-&lt;session_id&gt;.json"]
+    G --> R["checkpoint task + goal<br/>→ resume-&lt;session_id&gt;.json"]
     G --> K["CronCreate one-shot<br/>at reset + grace"]
     G --> S["lead STOPs — idle until cron"]
 
     K -.fires after reset.-> Z["lead runs the usage-guard skill · RESUME"]
     Z --> N2["PushNotification"]
-    Z --> RH["re-send / re-spawn teammates<br/>from resume-&lt;session_id&gt;.json"]
-    Z --> CO["continue the batch"]
+    Z --> CO["continue the work"]
 ```
 
 Subagents (one-shot `Agent`-tool runs) are left alone — they finish and return.
-Only the lead and teammates stand down.
+Only the lead stands down.
 
 | Component | Role |
 |-----------|------|
 | **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
-| **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, pause/rehydrate teammates, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
+| **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
 | **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint so a pending resume becomes a no-op. There is no mute — the guard stays armed, so cancel is durable only once the breach has passed. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
 
 ## Design notes
@@ -81,17 +79,12 @@ Where the correctness lives:
   that created them.
 - **One cache producer.** Detection reads the exact cache the status line already
   maintains; usage-guard never duplicates the OAuth call.
-- **Pause, don't kill.** A stand-down keeps every teammate's pane alive and idle,
-  never `TaskStop` — a live pane resumes from its own transcript, so no in-context
-  work is lost. `TaskStop` is a fallback only for an already-dead pane.
-- **Teammates stand themselves down too.** A teammate's own Stop hook fires on
-  breach (detected by the `--agent-id` its CLI carries, so a remote-controlled
-  lead is never mistaken for one); it pauses itself, sends one
-  note to the lead, and idles — never running the lead's notify/cron/checkpoint,
-  and latched on its own marker flag so it never busy-loops.
 - **Deferring costs you.** Ignore the warning and keep prompting past the limit and
-  each request pushes the scheduled resume +5 min — you are burning quota that
-  delays the real reset, so the estimate moves with it. Frozen once you stand down.
+  the push applies +5 min to the scheduled resume — but only per genuinely ignored
+  warning, at most once per 5 min of real wall-clock time, and never to a
+  hook-forced continuation (e.g. a `/goal` busy-loop). You are burning quota that
+  delays the real reset, so the estimate moves with it, without a machine-driven
+  loop outrunning real time. Frozen once you stand down.
 - **The pause badge self-expires.** The status line hides `⏸paused …` once the wake
   time is safely past even if no resume ran, and the hook reaps orphaned markers an
   hour past their wake — a stood-down idle session can't freeze a stale time forever.
@@ -116,15 +109,24 @@ Restart Claude Code so the Stop hook and skill load.
 
 ## Use
 
-Nothing to invoke. Run your work — including an Agent Teams batch — as usual. The
-Stop hook watches headroom after every response; when it crosses the threshold the
-lead automatically notifies, stands itself and every teammate down, checkpoints,
-and schedules the resume. One minute after the 5h limit resets the cron fires, the
-lead re-sends each teammate its task (or re-spawns a dead pane), and the batch
-continues.
+Nothing to invoke. Run your work as usual. The Stop hook watches headroom after
+every response; when it crosses the threshold the lead automatically notifies,
+stands itself down, checkpoints, and schedules the resume. One minute after the
+5h limit resets the cron fires and the lead continues from where it stood down.
 
 The lead's session must stay open for the resume cron to fire (it is session-only,
 nothing is written to the OS).
+
+## Anti-patterns
+
+Don't use `/goal` to hold a session until a fixed time. `/goal` is
+condition-based — it re-evaluates on every Stop-hook fire, so "wait until HH:MM"
+busy-loops the hook and burns quota every cycle. For a time-based hold, schedule a
+one-shot session cron with `CronCreate` (the same primitive usage-guard's own
+resume uses) and stay idle. Separately: `/goal clear` may surface one stale
+"Stop hook error" quoting the just-cleared condition afterward — that is Claude
+Code's own `/goal` internals, not usage-guard (its Stop hook always exits 0 and
+never reads or quotes goal state), and is harmless.
 
 ## Cancel a pending stand-down
 
