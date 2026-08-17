@@ -41,13 +41,18 @@ flowchart TD
     Z --> CO["continue the work"]
 ```
 
-Subagents (one-shot `Agent`-tool runs) are left alone — they finish and return.
-Only the lead stands down.
+Subagents already running are left alone — they finish and return. Only the
+lead stands down. New subagents are a different story: a `PreToolUse` gate on
+the `Agent` tool refuses to spawn one while the same breach that would stand
+the lead down is active, so a dispatch fired moments before the limit doesn't
+keep spending from a lead that's already stood down — and can't be killed
+mid-task by the limit itself.
 
 | Component | Role |
 |-----------|------|
 | **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
+| **`pretool-hook.sh`** | On `PreToolUse` for the `Agent` tool: re-uses `guard.sh`'s verdict and denies the spawn on breach, with a reason the model won't retry in a loop. Allows on any other reading, including a failure to read the cache. |
 | **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
 | **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint so a pending resume becomes a no-op. There is no mute — the guard stays armed, so cancel is durable only once the breach has passed. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
 
@@ -56,9 +61,11 @@ Only the lead stands down.
 Where the correctness lives:
 
 - **Fail-open, never fail-closed.** A missing, malformed, or rate-limited cache
-  yields `breach:false` with a `reason`, and the hook leaves any active pause
-  untouched. A monitor that halts your work because it couldn't read a temp file
-  is worse than no monitor.
+  yields `breach:false` with a `reason`, and the Stop hook leaves any active
+  pause untouched. The spawn gate goes further: anything that stops it from
+  reading a clean verdict — `guard.sh` missing, Ruby absent, unparseable
+  output — also means allow. A monitor that halts your work because it
+  couldn't read a temp file is worse than no monitor.
 - **Fire once per standdown.** The injected directive is latched by the session's
   `resume-<session_id>.json`: the hook drives the skill only when a standdown isn't
   already in progress, so a breach that persists across responses never busy-loops
@@ -105,7 +112,7 @@ renders the pause live: `⏸paused by 5h limit, resume 20:01`.
 curl -fsSL https://raw.githubusercontent.com/romacv/claude-usage-guard/main/install.sh | sh
 ```
 
-Restart Claude Code so the Stop hook and skill load.
+Restart Claude Code so the Stop hook, spawn gate, and skill load.
 
 ## Use
 
@@ -177,8 +184,8 @@ For production, keep a tight `stop_at_remaining` (e.g. `10`).
 curl -fsSL https://raw.githubusercontent.com/romacv/claude-usage-guard/main/uninstall.sh | sh
 ```
 
-Removes usage-guard, its skill, and its Stop hook; leaves the shared cache
-producer in place.
+Removes usage-guard, its skill, its Stop hook, and its spawn gate; leaves the
+shared cache producer in place.
 
 ## License
 

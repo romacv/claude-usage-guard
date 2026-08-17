@@ -17,9 +17,10 @@ mkdir -p "$GUARD_DIR" "$SKILL_DIR"
 
 curl -fsSL "$BASE_URL/guard.sh"       -o "$GUARD_DIR/guard.sh"
 curl -fsSL "$BASE_URL/stop-hook.sh"   -o "$GUARD_DIR/stop-hook.sh"
+curl -fsSL "$BASE_URL/pretool-hook.sh" -o "$GUARD_DIR/pretool-hook.sh"
 curl -fsSL "$BASE_URL/cancel.sh"      -o "$GUARD_DIR/cancel.sh"
 curl -fsSL "$BASE_URL/skill/SKILL.md" -o "$SKILL_DIR/SKILL.md"
-chmod +x "$GUARD_DIR/guard.sh" "$GUARD_DIR/stop-hook.sh" "$GUARD_DIR/cancel.sh"
+chmod +x "$GUARD_DIR/guard.sh" "$GUARD_DIR/stop-hook.sh" "$GUARD_DIR/pretool-hook.sh" "$GUARD_DIR/cancel.sh"
 
 # Config: never clobber an existing one (preserves the user's threshold).
 if [ ! -f "$GUARD_DIR/config.json" ]; then
@@ -72,13 +73,34 @@ unless has_command?(stop, "usage-guard/stop-hook.sh")
   }
 end
 
+# usage-guard's spawn gate: refuse new subagents on the same breach that
+# stands the lead down. Scoped to the Agent tool only.
+settings["hooks"]["PreToolUse"] ||= []
+pretool = settings["hooks"]["PreToolUse"]
+
+def has_pretool_command?(entries, needle)
+  entries.any? { |entry| (entry["hooks"] || []).any? { |h| h["command"].to_s.include?(needle) } }
+end
+
+unless has_pretool_command?(pretool, "usage-guard/pretool-hook.sh")
+  pretool << {
+    "matcher" => "Agent",
+    "hooks" => [{
+      "type"    => "command",
+      "command" => "bash $HOME/.claude/usage-guard/pretool-hook.sh",
+      "timeout" => 5
+    }]
+  }
+end
+
 File.write(settings_path, JSON.pretty_generate(settings))
 RUBY
 
 echo "usage-guard installed."
-echo "  detector:  $GUARD_DIR/guard.sh"
-echo "  config:    $GUARD_DIR/config.json  (stop_at_remaining, windows)"
-echo "  skill:     $SKILL_DIR/SKILL.md     (STANDDOWN + RESUME + CANCEL protocol)"
-echo "  cancel:    $GUARD_DIR/cancel.sh      (cancel a pending stand-down/resume)"
+echo "  detector:    $GUARD_DIR/guard.sh"
+echo "  config:      $GUARD_DIR/config.json  (stop_at_remaining, windows)"
+echo "  skill:       $SKILL_DIR/SKILL.md     (STANDDOWN + RESUME + CANCEL protocol)"
+echo "  cancel:      $GUARD_DIR/cancel.sh      (cancel a pending stand-down/resume)"
+echo "  spawn gate:  $GUARD_DIR/pretool-hook.sh (refuses new subagents on breach)"
 echo "The Stop hook detects low quota and drives the skill automatically."
-echo "Restart Claude Code to apply the Stop hook."
+echo "Restart Claude Code to apply the hooks."

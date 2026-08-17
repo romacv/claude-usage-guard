@@ -12,8 +12,11 @@ description: CLAUDE CODE ONLY. Stand down the lead session when plan-usage headr
 > this skill** — report the quota limit to the User as a blocker and do not reimplement
 > the protocol with your own primitives.
 
-Subagents (one-shot Agent-tool runs) are NOT touched — let them finish and return.
-Only the lead's own session stands down and resumes.
+Running subagents (one-shot Agent-tool runs already in flight) are NOT
+touched — let them finish and return. Only the lead's own session stands down
+and resumes. New subagents are a separate gate: a `PreToolUse` hook on the
+`Agent` tool (`pretool-hook.sh`) refuses to spawn one while the same breach is
+active, so a dispatch can't keep spending after the lead has stood down.
 
 Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `breach`, `remaining_5h`, `remaining_7d`, `stop_at_remaining`, `window` — the breached window(s), `5h`/`7d`/`5h+7d` — `wake_at_epoch`, `wake_at_iso`, `seconds_until_wake`).
 

@@ -22,8 +22,14 @@ if settings.dig("hooks", "Stop")
     (entry["hooks"] || []).any? { |h| h["command"].to_s.include?("usage-guard/stop-hook.sh") }
   end
   settings["hooks"].delete("Stop") if settings["hooks"]["Stop"].empty?
-  settings.delete("hooks") if settings["hooks"].empty?
 end
+if settings.dig("hooks", "PreToolUse")
+  settings["hooks"]["PreToolUse"].reject! do |entry|
+    (entry["hooks"] || []).any? { |h| h["command"].to_s.include?("usage-guard/pretool-hook.sh") }
+  end
+  settings["hooks"].delete("PreToolUse") if settings["hooks"]["PreToolUse"].empty?
+end
+settings.delete("hooks") if settings["hooks"] && settings["hooks"].empty?
 
 File.write(settings_path, JSON.pretty_generate(settings))
 RUBY
