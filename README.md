@@ -60,9 +60,11 @@ mid-task by the limit itself.
 
 Where the correctness lives:
 
-- **Fail-open, never fail-closed.** A missing, malformed, or rate-limited cache
-  yields `breach:false` with a `reason`, and the Stop hook leaves any active
-  pause untouched. The spawn gate goes further: anything that stops it from
+- **Fail-open, never fail-closed.** A missing, malformed, rate-limited, or
+  stale cache yields `breach:false` with a `reason` (`no_cache`, `bad_cache`,
+  `no_data`, or `stale_cache` when the cache is older than `max_age_seconds`),
+  and the Stop hook leaves any active pause untouched. The spawn gate goes
+  further: anything that stops it from
   reading a clean verdict — `guard.sh` missing, Ruby absent, unparseable
   output — also means allow. A monitor that halts your work because it
   couldn't read a temp file is worse than no monitor.
@@ -99,10 +101,12 @@ Where the correctness lives:
 ## Dependency
 
 usage-guard consumes `/tmp/claude_usage_cache.json`, produced by
-[claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline)'s
-`refresh-usage-cache.sh`. If it's installed, usage-guard reuses it; if not, the
-installer bootstraps just that one script and its Stop hook. The status line also
-renders the pause live: `⏸paused by 5h limit, resume 20:01`.
+[claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline) --
+written on every render from Claude Code's own stdin data when available, and
+by `refresh-usage-cache.sh`'s OAuth API fallback otherwise. If it's installed,
+usage-guard reuses it; if not, the installer bootstraps just the fallback
+script and its Stop hook. The status line also renders the pause live:
+`⏸paused by 5h limit, resume 20:01`.
 
 **Requirements:** macOS · Ruby (system Ruby is fine) · Claude Code, authenticated.
 
@@ -166,8 +170,9 @@ bother, leave it: with the checkpoint gone it just fires into a no-op.
 | `stop_at_remaining` | `10` | Stand down when remaining headroom (%) falls to this or below. |
 | `resume_grace_seconds` | `60` | Resume this many seconds after the reset. |
 | `windows` | `["5h"]` | Which limit windows to watch. Add `"7d"` to also stop on the weekly cap. |
+| `max_age_seconds` | `1800` | Reject the cache as `stale_cache` once it's older than this. |
 
-Per-run threshold override: `USAGE_GUARD_STOP_AT=80`.
+Per-run overrides: `USAGE_GUARD_STOP_AT=80`, `USAGE_GUARD_MAX_AGE=3600`.
 
 **Trying it out.** Force a breach on demand by raising the threshold above your
 current remaining:

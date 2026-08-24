@@ -15,7 +15,13 @@
 # LATEST reset among breached windows plus resume_grace_seconds, because you
 # only regain headroom once the slowest breached window has reset.
 #
+# A cache older than max_age_seconds is treated as an unknown reading
+# (reason "stale_cache"), same as no_cache/bad_cache/no_data — the Stop hook
+# only clears an active stand-down when reason is nil, so staleness never
+# lifts a real pause on its own.
+#
 # Config precedence: $USAGE_GUARD_STOP_AT env > config.json > built-in default.
+# Same precedence applies to $USAGE_GUARD_MAX_AGE > config.json > built-in default.
 set -uo pipefail
 
 CACHE_FILE="${USAGE_GUARD_CACHE:-/tmp/claude_usage_cache.json}"
@@ -24,17 +30,25 @@ CONFIG_FILE="${USAGE_GUARD_CONFIG:-$HOME/.claude/usage-guard/config.json}"
 ruby -rjson -rtime -e '
 cache, config = ARGV
 stop_env = ENV["USAGE_GUARD_STOP_AT"]
+max_age_env = ENV["USAGE_GUARD_MAX_AGE"]
 
 cfg = (File.exist?(config) ? (JSON.parse(File.read(config)) rescue {}) : {})
 stop_at   = (stop_env || cfg["stop_at_remaining"] || 10).to_f
 grace     = (cfg["resume_grace_seconds"] || 60).to_i
 windows   = cfg["windows"] || ["5h"]
+max_age   = (max_age_env || cfg["max_age_seconds"] || 1800).to_i
 
 def emit(h); puts JSON.generate(h); exit 0; end
 
 unless File.exist?(cache)
   emit({"breach" => false, "reason" => "no_cache", "stop_at_remaining" => stop_at})
 end
+
+age = (Time.now - File.mtime(cache)).to_i
+if age > max_age
+  emit({"breach" => false, "reason" => "stale_cache", "age_seconds" => age, "stop_at_remaining" => stop_at})
+end
+
 data = (JSON.parse(File.read(cache)) rescue nil)
 emit({"breach" => false, "reason" => "bad_cache", "stop_at_remaining" => stop_at}) if data.nil?
 
