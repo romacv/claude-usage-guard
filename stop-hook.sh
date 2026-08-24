@@ -30,7 +30,7 @@ dir = File.expand_path("~/.claude/usage-guard")
 stop_active = ENV["STOP_ACTIVE"] == "1"
 
 # Session-scope the state so concurrent Claude Code sessions never share one
-# marker/roster. session_id keys the files exactly like the loop-status segment;
+# marker/roster. session_id keys the files so each session gets its own state;
 # the usage cache and config stay global (account-wide by nature).
 sid = ENV["SESSION_ID"].to_s.gsub(/[^A-Za-z0-9_-]/, "")
 suffix = sid.empty? ? "" : "-#{sid}"
