@@ -41,13 +41,20 @@ resume = File.join(dir, "resume#{suffix}.json")
 # a session that may never respond again (it stood down and went idle), so no
 # per-session cleanup can reach it — some other live session's hook must sweep.
 # A legitimately pending marker always has a FUTURE wake_at_epoch; one more than
-# an hour past is provably dead. Skip files with no parseable epoch, never guess.
+# an hour past is provably dead. A marker with NO wake is a stand-down that
+# scheduled no resume (nothing was left to resume), so it has no clock to expire
+# against and its own session may never return — fall back to the file's own age
+# and sweep it after a day. Skip files that will not parse, never guess.
 now = Time.now.to_i
 Dir.glob(File.join(dir, "{standdown,resume}-*.json")).each do |f|
   begin
     m = JSON.parse(File.read(f))
     w = m.is_a?(Hash) ? m["wake_at_epoch"].to_i : 0
-    File.delete(f) if w > 0 && w + 3600 < now
+    if w > 0
+      File.delete(f) if w + 3600 < now
+    else
+      File.delete(f) if File.mtime(f).to_i + 86_400 < now
+    end
   rescue Errno::ENOENT
     # a concurrent hook already removed it — fine
   rescue StandardError

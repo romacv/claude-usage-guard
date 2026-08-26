@@ -1,6 +1,6 @@
 ---
 name: usage-guard
-description: CLAUDE CODE ONLY. Stand down the lead session when plan-usage headroom is low, notify, and schedule an automatic resume one minute after the limit resets. The STANDDOWN protocol is triggered automatically by the usage-guard Stop hook on breach; the RESUME protocol is triggered by the one-shot cron the standdown schedules.
+description: CLAUDE CODE ONLY. Stand down the lead session when plan-usage headroom is low, notify, and — only when work is left unfinished — schedule an automatic resume one minute after the limit resets. The STANDDOWN protocol is triggered automatically by the usage-guard Stop hook on breach; the RESUME protocol is triggered by the one-shot cron the standdown schedules.
 ---
 
 # usage-guard: quota stand-down & resume
@@ -23,12 +23,24 @@ Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verd
 ## STANDDOWN — run once when the Stop hook flags a breach, then stop
 
 1. **Numbers.** Take `resume` from **this session's stand-down marker** `~/.claude/usage-guard/standdown-<session_id>.json` — its `wake_at_epoch`/`wake_at_iso` already include any **deferral push** (+5 min per breach warning you ignored before standing down), so the cron lands on the real, pushed time, not a fresh guard.sh reading. Compute `resume` = local `HH:MM` (add the date if not today) of that `wake_at_epoch`. (The injected Stop-hook directive already states this pushed `resume` — use it.)
-2. **Notify.** `PushNotification` (status `proactive`): `usage-guard: <window> <rem>% <= <limit>% — standing down, resume <resume>` — take `<window>` (`5h`, `7d`, or `5h+7d`) and `<rem>` (the remaining headroom of the tightest breached window) from the injected Stop-hook directive, or from this session's marker's `window`/`remaining_5h`/`remaining_7d`/`stop_at_remaining` fields if composing fresh. Never hardcode `5h` — a `7d` or `5h+7d` breach must report its own window and remaining %.
-3. **Schedule the resume** — local, session-only, minute-accurate, single fire. Do this **before** the checkpoint so the cron's id goes into it in one write (no second edit). Read `wake_at_iso` from **this session's stand-down marker** `standdown-<session_id>.json` (local ISO, e.g. `2026-07-18T01:01:00`; it carries the deferral push — do NOT re-read a fresh guard.sh verdict, which would drop it) and map it straight to a 5-field cron `minute hour day-of-month month day-of-week`, adding ~1 min so it fires just AFTER the reset (day-of-week stays `*`). **Don't eyeball the format — call it exactly like this** (worked example for `wake_at_iso` = `2026-07-18T01:01:00` → fire 01:02):
+2. **Notify.** `PushNotification` (status `proactive`): `usage-guard: <window> <rem>% <= <limit>% — standing down, resume <resume>`, or `… — standing down, nothing queued` when step 3 skips the cron — take `<window>` (`5h`, `7d`, or `5h+7d`) and `<rem>` (the remaining headroom of the tightest breached window) from the injected Stop-hook directive, or from this session's marker's `window`/`remaining_5h`/`remaining_7d`/`stop_at_remaining` fields if composing fresh. Never hardcode `5h` — a `7d` or `5h+7d` breach must report its own window and remaining %.
+3. **Schedule the resume — only if there is work to resume.** Decide this first. A cron
+   that wakes the session to announce the reset and then sit idle spends a whole turn on
+   nothing; that is the same waste as a busy-loop, just once. Ask whether anything
+   continues **without** the User: an unfinished task, a build or job to read back, a
+   queued next step. If nothing does — his last request is finished and the next move is
+   his — **skip this step entirely**: no cron, `resume_cron_id: null` in the checkpoint,
+   and the shorter notification from step 2. Then **delete `standdown-<session_id>.json`**.
+   That file is what the status line renders, and a `paused, resume HH:MM` badge with no
+   cron behind it is a promise nothing keeps; with nothing scheduled there is no pause to
+   display. Keep `resume-<session_id>.json` — that one is the Stop hook's latch, so the
+   stand-down directive still does not re-fire. Nothing strands: the reaper sweeps a
+   wake-less checkpoint by file age after a day, and the next definite no-breach reading
+   clears whatever is left. Otherwise — local, session-only, minute-accurate, single fire. Do this **before** the checkpoint so the cron's id goes into it in one write (no second edit). Read `wake_at_iso` from **this session's stand-down marker** `standdown-<session_id>.json` (local ISO, e.g. `2026-07-18T01:01:00`; it carries the deferral push — do NOT re-read a fresh guard.sh verdict, which would drop it) and map it straight to a 5-field cron `minute hour day-of-month month day-of-week`, adding ~1 min so it fires just AFTER the reset (day-of-week stays `*`). **Don't eyeball the format — call it exactly like this** (worked example for `wake_at_iso` = `2026-07-18T01:01:00` → fire 01:02):
    `CronCreate({ cron: "2 1 18 7 *", recurring: false, prompt: "Invoke the usage-guard skill and run its RESUME protocol. Read ~/.claude/usage-guard/resume-<session_id>.json; if it is absent the stand-down was cancelled — stop. Otherwise re-verify with guard.sh; if still breaching increment resume_retries and re-schedule ~5 min out (after 3 retries stop and PushNotification instead of looping), else resume, then delete resume-<session_id>.json + standdown-<session_id>.json." })`
-4. **Checkpoint** — **one write, no follow-up edit.** Reconcile your own in-progress ledger task first — no task ends `in_progress` — and record it as `lead_task`, so your own work doesn't read as abandoned on resume. Then write the **session-scoped** marker the Stop-hook directive gave you — `~/.claude/usage-guard/resume-<session_id>.json`, never a shared `resume.json` (concurrent sessions would clobber each other) — with `resume_cron_id` already set to the id step 3 returned and `resume_retries` at 0, so CANCEL can delete the exact job deterministically even after a context compaction:
+4. **Checkpoint** — **one write, no follow-up edit.** Reconcile your own in-progress ledger task first — no task ends `in_progress` — and record it as `lead_task`, so your own work doesn't read as abandoned on resume. Then write the **session-scoped** marker the Stop-hook directive gave you — `~/.claude/usage-guard/resume-<session_id>.json`, never a shared `resume.json` (concurrent sessions would clobber each other) — with `resume_cron_id` already set to the id step 3 returned — or `null` when step 3 was skipped — and `resume_retries` at 0, so CANCEL can delete the exact job deterministically even after a context compaction:
    `{ "goal": "<batch goal>", "wake_at_epoch": <n>, "resume_cron_id": "<id from step 3>", "resume_retries": 0, "lead_task": "<your own in-progress task, reconciled + full state>" }`
-5. **Stop.** Do no further work. The session goes idle until the cron fires — this is what lets the lead itself resume without any OS scheduler.
+5. **Stop.** Do no further work. The session goes idle until the cron fires — this is what lets the lead itself resume without any OS scheduler. With no cron it stays idle until the User comes back, which is the right outcome when nothing was waiting on the clock.
 
 ## RESUME — run when the scheduled cron fires
 
@@ -43,10 +55,13 @@ Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verd
 Run when the user asks to cancel the resume / not stand down after all.
 
 1. **Drop the checkpoint.** `bash ~/.claude/usage-guard/cancel.sh <session_id>` — clears this session's `standdown-<session_id>.json` + `resume-<session_id>.json` (the status line pause clears). There is NO mute: the guard stays armed, so if the session is still in breach the next Stop hook stands down again — intended, the guard cannot be silenced. Cancel is only durable once the breach has actually passed.
-2. **Drop the resume cron.** `cancel.sh` prints the checkpoint's `resume_cron_id` before it clears the file — `CronDelete` that exact id, no guessing (or read it from `resume-<session_id>.json` yourself if you skipped `cancel.sh`). Session-only crons can be deleted **only from the window that created them**: from any other window, close that window to kill its cron instead. Either way this is best-effort — with the checkpoint gone, an orphaned cron just fires into a no-op (RESUME aborts at step 1).
+2. **Drop the resume cron**, if there is one. `cancel.sh` prints the checkpoint's `resume_cron_id` before it clears the file — `null` means no cron was scheduled and this step is done. Otherwise `CronDelete` that exact id, no guessing (or read it from `resume-<session_id>.json` yourself if you skipped `cancel.sh`). Session-only crons can be deleted **only from the window that created them**: from any other window, close that window to kill its cron instead. Either way this is best-effort — with the checkpoint gone, an orphaned cron just fires into a no-op (RESUME aborts at step 1).
 3. **No re-arm step** — there is no mute to remove; the guard is always armed.
 
 ## Anti-patterns
+
+A resume with nothing to resume is waste: the session wakes, says the limits reset, and
+idles. Schedule one only when work actually continues.
 
 `/goal` is condition-based; it busy-loops the Stop hook and burns quota every
 cycle. For "hold until HH:MM" use a one-shot session cron (`CronCreate`) — the
