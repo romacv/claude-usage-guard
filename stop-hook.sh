@@ -135,11 +135,16 @@ unless File.exist?(resume) || stop_active
     "hookEventName" => "Stop",
     "additionalContext" =>
       "usage-guard BREACH: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
-      "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then checkpoint THIS " \
-      "session's in-progress task + goal to #{resume} (session-scoped — use exactly this path, never a shared one), " \
-      "and CronCreate a one-shot resume for ~1 min after the reset at #{resume_at} whose prompt runs the usage-guard " \
-      "RESUME protocol reading #{resume} and deleting #{resume} + #{marker} on completion. Let running subagents " \
-      "finish; do not touch them. Then STOP and stay idle until the cron fires. Reply one line: paused, resume #{resume_at}."
+      "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then ANSWER THIS FIRST — " \
+      "does anything continue WITHOUT the User (an unfinished task, a build or job to read back, a queued next step)? " \
+      "If NOTHING does — his last request is finished and the next move is his — schedule NO cron, checkpoint to " \
+      "#{resume} with resume_cron_id: null, delete #{marker}, and reply one line: paused, nothing queued. " \
+      "Only when work actually continues: if #{resume} already exists, CronDelete the resume_cron_id it names, then " \
+      "CronCreate a one-shot resume for ~1 min after the reset at #{resume_at} whose prompt runs the usage-guard " \
+      "RESUME protocol reading #{resume} and deleting #{resume} + #{marker} on completion, and checkpoint THIS " \
+      "session's in-progress task + goal to #{resume} (session-scoped — use exactly this path, never a shared one). " \
+      "Let running subagents finish; do not touch them. Then STOP and stay idle until the cron fires. " \
+      "Reply one line: paused, resume #{resume_at}."
   }
 end
 
