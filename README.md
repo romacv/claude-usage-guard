@@ -105,8 +105,15 @@ usage-guard consumes `/tmp/claude_usage_cache.json`, produced by
 written on every render from Claude Code's own stdin data when available, and
 by `refresh-usage-cache.sh`'s OAuth API fallback otherwise. If it's installed,
 usage-guard reuses it; if not, the installer bootstraps just the fallback
-script and its Stop hook. The status line also renders the pause live:
-`⏸paused to 20:01`.
+script and its Stop hook. With the status line installed, a stood-down session
+says so live, ahead of everything else on its first line:
+
+```
+⏸paused to 20:01 | ◆Opus 5·1M | ▤Ctx:62% | ▮5h:8% ⧖2h11m | ▮1w:46% ⧖Sep 7 11:00
+```
+
+The badge appears the moment the stand-down marker is written and clears itself
+once the window has reset.
 
 **Requirements:** macOS · Ruby (system Ruby is fine) · Claude Code, authenticated.
 
