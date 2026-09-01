@@ -33,7 +33,7 @@ stop_env = ENV["USAGE_GUARD_STOP_AT"]
 max_age_env = ENV["USAGE_GUARD_MAX_AGE"]
 
 cfg = (File.exist?(config) ? (JSON.parse(File.read(config)) rescue {}) : {})
-stop_at   = (stop_env || cfg["stop_at_remaining"] || 10).to_f
+stop_at   = (stop_env || cfg["stop_at_remaining"] || 13).to_f
 grace     = (cfg["resume_grace_seconds"] || 60).to_i
 windows   = cfg["windows"] || ["5h"]
 max_age   = (max_age_env || cfg["max_age_seconds"] || 1800).to_i

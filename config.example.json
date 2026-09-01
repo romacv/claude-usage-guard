@@ -1,5 +1,5 @@
 {
-  "stop_at_remaining": 10,
+  "stop_at_remaining": 13,
   "resume_grace_seconds": 60,
   "windows": ["5h"],
   "max_age_seconds": 1800

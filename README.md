@@ -174,7 +174,7 @@ bother, leave it: with the checkpoint gone it just fires into a no-op.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `stop_at_remaining` | `10` | Stand down when remaining headroom (%) falls to this or below. |
+| `stop_at_remaining` | `13` | Stand down when remaining headroom (%) falls to this or below. |
 | `resume_grace_seconds` | `60` | Resume this many seconds after the reset. |
 | `windows` | `["5h"]` | Which limit windows to watch. Add `"7d"` to also stop on the weekly cap. |
 | `max_age_seconds` | `1800` | Reject the cache as `stale_cache` once it's older than this. |
@@ -188,7 +188,7 @@ current remaining:
 USAGE_GUARD_STOP_AT=90 ~/.claude/usage-guard/guard.sh   # inspect the verdict
 ```
 
-For production, keep a tight `stop_at_remaining` (e.g. `10`).
+For production, keep a tight `stop_at_remaining` (e.g. `13`).
 
 ## Uninstall
 
