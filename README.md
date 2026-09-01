@@ -106,7 +106,7 @@ written on every render from Claude Code's own stdin data when available, and
 by `refresh-usage-cache.sh`'s OAuth API fallback otherwise. If it's installed,
 usage-guard reuses it; if not, the installer bootstraps just the fallback
 script and its Stop hook. The status line also renders the pause live:
-`⏸paused by 5h limit, resume 20:01`.
+`⏸paused to 20:01`.
 
 **Requirements:** macOS · Ruby (system Ruby is fine) · Claude Code, authenticated.
 

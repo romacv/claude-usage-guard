@@ -31,7 +31,7 @@ Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verd
    queued next step. If nothing does — his last request is finished and the next move is
    his — **skip this step entirely**: no cron, `resume_cron_id: null` in the checkpoint,
    and the shorter notification from step 2. Then **delete `standdown-<session_id>.json`**.
-   That file is what the status line renders, and a `paused, resume HH:MM` badge with no
+   That file is what the status line renders, and a `⏸paused to HH:MM` badge with no
    cron behind it is a promise nothing keeps; with nothing scheduled there is no pause to
    display. Keep `resume-<session_id>.json` — that one is the Stop hook's latch, so the
    stand-down directive still does not re-fire. Nothing strands: the reaper sweeps a
