@@ -12,6 +12,12 @@
 #   - breach, standdown already in progress (resume.json exists): warns only, so
 #     the injected directive fires once per standdown, never in a busy loop.
 #
+# On a breach the session transcript's most recent non-sidechain assistant
+# entry names the model that served the session: /^claude-/i is native,
+# anything else custom, unreadable unknown. The kind + id land in the marker
+# and tag the breach message and directive's first sentence — detection only,
+# the breach logic never depends on the model, and unknown tags nothing.
+#
 # The marker is cleared only on a DEFINITE no-breach; an unknown reading
 # (no_cache/bad_cache/no_data) leaves any active pause untouched. Never blocks.
 set -uo pipefail
@@ -23,8 +29,9 @@ VERDICT="$("$DIR/guard.sh" 2>/dev/null)"
 
 SESSION_ID="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["session_id"] rescue "").to_s)' 2>/dev/null)"
 STOP_ACTIVE="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts(((JSON.parse(STDIN.read)["stop_hook_active"] rescue false) == true) ? "1" : "0")' 2>/dev/null)"
+TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["transcript_path"] rescue "").to_s)' 2>/dev/null)"
 
-VERDICT="$VERDICT" SESSION_ID="$SESSION_ID" STOP_ACTIVE="$STOP_ACTIVE" ruby -rjson <<'RUBY'
+VERDICT="$VERDICT" SESSION_ID="$SESSION_ID" STOP_ACTIVE="$STOP_ACTIVE" TRANSCRIPT_PATH="$TRANSCRIPT_PATH" ruby -rjson <<'RUBY'
 v = (JSON.parse(ENV["VERDICT"]) rescue {})
 dir = File.expand_path("~/.claude/usage-guard")
 stop_active = ENV["STOP_ACTIVE"] == "1"
@@ -68,6 +75,52 @@ unless v["breach"]
 end
 
 v["by"] = "#{v["window"]} limit"
+
+# Which model served this session's latest response — the hook input carries
+# no model field, so read the session transcript's most recent non-sidechain
+# assistant entry (the hook fires right after one, so the tail holds it; a
+# tail that yields nothing falls back to the whole file). Detection only: the
+# kind + id tag the breach message and land in the marker; a breach itself
+# never depends on the model, and an unreadable model tags nothing.
+scan_entries = lambda do |lines|
+  lines.reverse_each do |line|
+    d = (JSON.parse(line) rescue nil)
+    next unless d.is_a?(Hash)
+    next if d["isSidechain"]
+    m = d["message"]
+    next unless m.is_a?(Hash)
+    mid = m["model"]
+    return mid if mid.is_a?(String) && !mid.strip.empty?
+  end
+  nil
+end
+model_id =
+  begin
+    tp = ENV["TRANSCRIPT_PATH"].to_s
+    raise StandardError, "no transcript" if tp.empty? || !File.exist?(tp)
+
+    size = File.size(tp)
+    if size > 65_536
+      tail = File.open(tp, "rb") { |f| f.seek(size - 65_536); f.read.to_s.lines }
+      scan_entries.(tail) || scan_entries.(File.readlines(tp))
+    else
+      scan_entries.(File.readlines(tp))
+    end
+  rescue StandardError
+    nil
+  end
+if model_id
+  v["model_id"] = model_id.strip.gsub(/[[:cntrl:]]/, "")[0, 64]
+  v["model_kind"] = model_id.match?(/\Aclaude-/i) ? "native" : "custom"
+else
+  v["model_id"] = ""
+  v["model_kind"] = "unknown"
+end
+tag = case v["model_kind"]
+      when "native" then " (claude)"
+      when "custom" then " (custom #{v["model_id"]})"
+      else ""
+      end
 
 # Deferral penalty: each time this breach warning RE-fires because the user kept
 # prompting instead of standing down, push the resume +5 min. Continuing past the
@@ -124,7 +177,7 @@ breached_rems << v["remaining_7d"] if win.include?("7d")
 brem = breached_rems.compact.min
 
 out = {
-  "systemMessage" => "usage-guard: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit -- paused, resume #{resume_at}."
+  "systemMessage" => "usage-guard: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit -- paused, resume #{resume_at}#{tag}."
 }
 
 # Inject exactly one directive per breach episode, latched so it never busy-loops.
@@ -134,7 +187,7 @@ unless File.exist?(resume) || stop_active
   out["hookSpecificOutput"] = {
     "hookEventName" => "Stop",
     "additionalContext" =>
-      "usage-guard BREACH: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit. " \
+      "usage-guard BREACH: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit#{tag}. " \
       "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then ANSWER THIS FIRST — " \
       "does anything continue WITHOUT the User (an unfinished task, a build or job to read back, a queued next step)? " \
       "If NOTHING does — his last request is finished and the next move is his — schedule NO cron, checkpoint to " \

@@ -88,6 +88,12 @@ Where the correctness lives:
   that created them.
 - **One cache producer.** Detection reads the exact cache the status line already
   maintains; usage-guard never duplicates the OAuth call.
+- **Native or custom model.** On a breach the hook reads the session
+  transcript's most recent non-sidechain assistant entry: `/^claude-/i` is
+  native, anything else custom, unreadable unknown. The kind and id land in
+  the stand-down marker and tag the breach message — `(custom glm-5.3-flash)`
+  — so a session served through a proxy shows what actually served it; the
+  breach itself never depends on the model, and an unreadable model tags nothing.
 - **Deferring costs you.** Ignore the warning and keep prompting past the limit and
   the push applies +5 min to the scheduled resume — but only per genuinely ignored
   warning, at most once per 5 min of real wall-clock time, and never to a
