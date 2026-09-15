@@ -52,7 +52,7 @@ mid-task by the limit itself.
 |-----------|------|
 | **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
-| **`pretool-hook.sh`** | On `PreToolUse` for the `Agent` tool: re-uses `guard.sh`'s verdict and denies the spawn on breach, with a reason the model won't retry in a loop. Allows on any other reading, including a failure to read the cache. |
+| **`pretool-hook.sh`** | On `PreToolUse` for the `Agent` tool: re-uses `guard.sh`'s verdict and denies the spawn on breach, with a reason the model won't retry in a loop. A session on a custom model is exempt — its spend never touches the plan. Allows on any other reading, including a failure to read the cache. |
 | **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
 | **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint so a pending resume becomes a no-op. There is no mute — the guard stays armed, so cancel is durable only once the breach has passed. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
 
@@ -90,10 +90,12 @@ Where the correctness lives:
   maintains; usage-guard never duplicates the OAuth call.
 - **Native or custom model.** On a breach the hook reads the session
   transcript's most recent non-sidechain assistant entry: `/^claude-/i` is
-  native, anything else custom, unreadable unknown. The kind and id land in
-  the stand-down marker and tag the breach message — `(custom glm-5.3-flash)`
-  — so a session served through a proxy shows what actually served it; the
-  breach itself never depends on the model, and an unreadable model tags nothing.
+  native, anything else custom, unreadable unknown. A custom model doesn't
+  spend the plan quota the guard watches — its requests go to the custom
+  provider — so a custom session stands aside entirely: no marker, no pause
+  badge, no spawn gate. Native and unknown sessions guard as before, the
+  marker records which model stood down, and a native breach message is
+  tagged `(claude)`; an unreadable model tags nothing.
 - **Deferring costs you.** Ignore the warning and keep prompting past the limit and
   the push applies +5 min to the scheduled resume — but only per genuinely ignored
   warning, at most once per 5 min of real wall-clock time, and never to a

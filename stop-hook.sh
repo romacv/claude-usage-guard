@@ -14,9 +14,10 @@
 #
 # On a breach the session transcript's most recent non-sidechain assistant
 # entry names the model that served the session: /^claude-/i is native,
-# anything else custom, unreadable unknown. The kind + id land in the marker
-# and tag the breach message and directive's first sentence — detection only,
-# the breach logic never depends on the model, and unknown tags nothing.
+# anything else custom, unreadable unknown. A custom model never spends the
+# plan quota the guard watches, so a custom session stands aside entirely —
+# no marker, no pause, no directive; native and unknown guard as before, the
+# kind + id land in the marker and a native breach message is tagged (claude).
 #
 # The marker is cleared only on a DEFINITE no-breach; an unknown reading
 # (no_cache/bad_cache/no_data) leaves any active pause untouched. Never blocks.
@@ -116,11 +117,20 @@ else
   v["model_id"] = ""
   v["model_kind"] = "unknown"
 end
-tag = case v["model_kind"]
-      when "native" then " (claude)"
-      when "custom" then " (custom #{v["model_id"]})"
-      else ""
-      end
+# A session served by a non-Claude model doesn't spend the plan quota the
+# guard watches — its requests go to the custom provider, so the plan window
+# it reads is other sessions' burn, not its own. Stand aside silently and
+# clear any pause an older hook wrote for it; unknown models keep the
+# fail-safe behavior. Detection only named the model above; this is the one
+# place the kind changes behavior.
+if v["model_kind"] == "custom"
+  File.delete(marker) if File.exist?(marker)
+  exit 0
+end
+
+# Breach messages only ever fire for native/unknown sessions now — custom
+# stands aside above — so the tag names the only kind that can pause.
+tag = v["model_kind"] == "native" ? " (claude)" : ""
 
 # Deferral penalty: each time this breach warning RE-fires because the user kept
 # prompting instead of standing down, push the resume +5 min. Continuing past the
