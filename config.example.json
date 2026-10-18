@@ -1,6 +1,6 @@
 {
-  "stop_at_remaining": 13,
+  "stop_at_remaining": {"5h": 13, "7d": 7},
   "resume_grace_seconds": 60,
-  "windows": ["5h"],
+  "windows": ["5h", "7d"],
   "max_age_seconds": 1800
 }

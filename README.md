@@ -25,7 +25,7 @@ reopens.** usage-guard encodes that discipline so the run does it on its own.
 flowchart TD
     P["claude-plan-usage-statusline<br/>refresh-usage-cache.sh"] -. writes cache .-> B
     A["Stop hook · after every lead response"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
-    B --> C{"remaining ≤ stop_at_remaining?<br/>(5h window)"}
+    B --> C{"remaining ≤ stop_at_remaining?<br/>(per window)"}
     C -->|no| E["clear standdown marker"]
     C -->|yes, standdown already running| W["warn only<br/>(latched by the session's resume file)"]
     C -->|yes, new| F["write marker + warn<br/>inject STANDDOWN directive"]
@@ -182,9 +182,9 @@ bother, leave it: with the checkpoint gone it just fires into a no-op.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `stop_at_remaining` | `13` | Stand down when remaining headroom (%) falls to this or below. |
+| `stop_at_remaining` | `{"5h": 13, "7d": 7}` | Stand down when a window's remaining headroom (%) falls to its value or below; a number sets both. |
 | `resume_grace_seconds` | `60` | Resume this many seconds after the reset. |
-| `windows` | `["5h"]` | Which limit windows to watch. Add `"7d"` to also stop on the weekly cap. |
+| `windows` | `["5h", "7d"]` | Which limit windows to watch. |
 | `max_age_seconds` | `1800` | Reject the cache as `stale_cache` once it's older than this. |
 
 Per-run overrides: `USAGE_GUARD_STOP_AT=80`, `USAGE_GUARD_MAX_AGE=3600`.
@@ -196,7 +196,7 @@ current remaining:
 USAGE_GUARD_STOP_AT=90 ~/.claude/usage-guard/guard.sh   # inspect the verdict
 ```
 
-For production, keep a tight `stop_at_remaining` (e.g. `13`).
+For production, keep tight limits (e.g. `{"5h": 13, "7d": 7}`).
 
 ## Uninstall
 

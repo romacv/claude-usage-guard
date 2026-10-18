@@ -20,7 +20,7 @@
 # only clears an active stand-down when reason is nil, so staleness never
 # lifts a real pause on its own.
 #
-# Config precedence: $USAGE_GUARD_STOP_AT env > config.json > built-in default.
+# Config precedence: $USAGE_GUARD_STOP_AT env (both windows) > config.json > built-in default (5h 13, 7d 7).
 # Same precedence applies to $USAGE_GUARD_MAX_AGE > config.json > built-in default.
 set -uo pipefail
 
@@ -33,9 +33,15 @@ stop_env = ENV["USAGE_GUARD_STOP_AT"]
 max_age_env = ENV["USAGE_GUARD_MAX_AGE"]
 
 cfg = (File.exist?(config) ? (JSON.parse(File.read(config)) rescue {}) : {})
-stop_at   = (stop_env || cfg["stop_at_remaining"] || 13).to_f
+limits    = cfg["stop_at_remaining"]
+limits    = {"5h" => limits, "7d" => limits} if limits.is_a?(Numeric)
+limits    = {"5h" => 13, "7d" => 7}.merge(limits.is_a?(Hash) ? limits : {})
+limits    = {"5h" => stop_env, "7d" => stop_env} if stop_env
+stop5     = limits["5h"].to_f
+stop7     = limits["7d"].to_f
+stop_at   = {"5h" => stop5, "7d" => stop7}
 grace     = (cfg["resume_grace_seconds"] || 60).to_i
-windows   = cfg["windows"] || ["5h"]
+windows   = cfg["windows"] || ["5h", "7d"]
 max_age   = (max_age_env || cfg["max_age_seconds"] || 1800).to_i
 
 def emit(h); puts JSON.generate(h); exit 0; end
@@ -72,11 +78,11 @@ if readable.empty?
 end
 
 breached = []
-if windows.include?("5h") && !rem5.nil? && rem5 <= stop_at
-  breached << ["5h", rem5, reset.(fh)]
+if windows.include?("5h") && !rem5.nil? && rem5 <= stop5
+  breached << ["5h", rem5, reset.(fh), stop5]
 end
-if windows.include?("7d") && !rem7.nil? && rem7 <= stop_at
-  breached << ["7d", rem7, reset.(wk)]
+if windows.include?("7d") && !rem7.nil? && rem7 <= stop7
+  breached << ["7d", rem7, reset.(wk), stop7]
 end
 
 if breached.empty?
@@ -84,15 +90,15 @@ if breached.empty?
 end
 
 now = Time.now.to_i
-resets = breached.map { |_, _, r| (Time.parse(r).to_i rescue nil) }.compact
+resets = breached.map { |_, _, r, _| (Time.parse(r).to_i rescue nil) }.compact
 wake = (resets.empty? ? now : resets.max) + grace
 
 emit({
   "breach" => true,
-  "window" => breached.map { |w, _, _| w }.join("+"),
+  "window" => breached.map { |w, _, _, _| w }.join("+"),
   "remaining_5h" => rem5,
   "remaining_7d" => rem7,
-  "stop_at_remaining" => stop_at,
+  "stop_at_remaining" => breached.min_by { |_, rem, _, _| rem }[3],
   "wake_at_epoch" => wake,
   "wake_at_iso" => Time.at(wake).iso8601,
   "seconds_until_wake" => [wake - now, 0].max
