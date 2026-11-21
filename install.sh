@@ -5,7 +5,7 @@ set -e
 # Installs the detector, Stop hook, cancel helper, and stand-down/resume skill,
 # and wires the hook into ~/.claude/settings.json idempotently. Depends on the
 # usage cache produced by claude-plan-usage-statusline; if that producer is
-# missing, bootstraps just its refresh script + Stop hook so the guard has data.
+# missing, fetches its statusline.rb so guard.sh can refresh a stale cache.
 
 BASE_URL="https://raw.githubusercontent.com/romacv/claude-usage-guard/main"
 STATUSLINE_URL="https://raw.githubusercontent.com/romacv/claude-plan-usage-statusline/main"
@@ -28,14 +28,11 @@ if [ ! -f "$GUARD_DIR/config.json" ]; then
 fi
 
 # Dependency bootstrap: the cache producer lives in claude-plan-usage-statusline.
-BOOTSTRAPPED_REFRESH=0
-if [ ! -f "$CLAUDE_DIR/refresh-usage-cache.sh" ]; then
-  curl -fsSL "$STATUSLINE_URL/refresh-usage-cache.sh" -o "$CLAUDE_DIR/refresh-usage-cache.sh"
-  chmod +x "$CLAUDE_DIR/refresh-usage-cache.sh"
-  BOOTSTRAPPED_REFRESH=1
+if [ ! -f "$CLAUDE_DIR/statusline.rb" ]; then
+  curl -fsSL "$STATUSLINE_URL/statusline.rb" -o "$CLAUDE_DIR/statusline.rb"
 fi
 
-BOOTSTRAPPED_REFRESH="$BOOTSTRAPPED_REFRESH" ruby - <<'RUBY'
+ruby - <<'RUBY'
 require "json"
 
 settings_path = File.expand_path("~/.claude/settings.json")
@@ -48,18 +45,6 @@ def has_command?(stop, needle)
 end
 
 stop = settings["hooks"]["Stop"]
-
-# Bootstrap the cache producer's refresh hook only if we just fetched it and
-# nothing already refreshes the cache.
-if ENV["BOOTSTRAPPED_REFRESH"] == "1" && !has_command?(stop, "refresh-usage-cache.sh")
-  stop << {
-    "matcher" => "",
-    "hooks" => [{
-      "type"    => "command",
-      "command" => "bash -c 'nohup bash $HOME/.claude/refresh-usage-cache.sh >/dev/null 2>&1 &'"
-    }]
-  }
-end
 
 # usage-guard's own Stop hook (foreground: its systemMessage must reach the session).
 unless has_command?(stop, "usage-guard/stop-hook.sh")

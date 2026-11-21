@@ -23,7 +23,8 @@ reopens.** usage-guard encodes that discipline so the run does it on its own.
 
 ```mermaid
 flowchart TD
-    P["claude-plan-usage-statusline<br/>refresh-usage-cache.sh"] -. writes cache .-> B
+    P["claude-plan-usage-statusline<br/>statusline.rb"] -. writes cache .-> B
+    B -. stale: statusline.rb --refresh-cache .-> P
     A["Stop hook · after every lead response"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
     B --> C{"remaining ≤ stop_at_remaining?<br/>(per window)"}
     C -->|no| E["clear standdown marker"]
@@ -50,7 +51,7 @@ mid-task by the limit itself.
 
 | Component | Role |
 |-----------|------|
-| **`guard.sh`** | Pure *reader* of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API. |
+| **`guard.sh`** | Reader of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API itself; a missing or stale cache makes it run `statusline.rb --refresh-cache` (2 s cap, at most once per `refresh_min_interval_seconds`) and report the outcome as `refresh`. |
 | **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
 | **`pretool-hook.sh`** | On `PreToolUse` for the `Agent` tool: re-uses `guard.sh`'s verdict and denies the spawn on breach, with a reason the model won't retry in a loop. A session on a custom model is exempt — its spend never touches the plan. Allows on any other reading, including a failure to read the cache. |
 | **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
@@ -62,7 +63,8 @@ Where the correctness lives:
 
 - **Fail-open, never fail-closed.** A missing, malformed, rate-limited, or
   stale cache yields `breach:false` with a `reason` (`no_cache`, `bad_cache`,
-  `no_data`, or `stale_cache` when the cache is older than `max_age_seconds`),
+  `no_data`, or `stale_cache` when the cache is older than `max_age_seconds`;
+  a failed refresh adds `refresh`, e.g. `no_token`, `http_401`, `backoff`),
   and the Stop hook leaves any active pause untouched. The spawn gate goes
   further: anything that stops it from
   reading a clean verdict — `guard.sh` missing, Ruby absent, unparseable
@@ -87,7 +89,11 @@ Where the correctness lives:
   limit is the platform's: session-only crons can be removed only from the window
   that created them.
 - **One cache producer.** Detection reads the exact cache the status line already
-  maintains; usage-guard never duplicates the OAuth call.
+  maintains; a stale cache (a session that draws no status line, such as the
+  desktop app) is refreshed through the producer's own `--refresh-cache` mode,
+  so usage-guard never duplicates the OAuth call. That mode needs a token:
+  `$CLAUDE_CODE_OAUTH_TOKEN`, `~/.agents/keys/claude-oauth-token`, or the
+  keychain item; without one the reading stays unknown (`refresh: no_token`).
 - **Native or custom model.** On a breach the hook reads the session
   transcript's most recent non-sidechain assistant entry: `/^claude-/i` is
   native, anything else custom, unreadable unknown. A custom model doesn't
@@ -111,9 +117,9 @@ Where the correctness lives:
 usage-guard consumes `/tmp/claude_usage_cache.json`, produced by
 [claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline) --
 written on every render from Claude Code's own stdin data when available, and
-by `refresh-usage-cache.sh`'s OAuth API fallback otherwise. If it's installed,
-usage-guard reuses it; if not, the installer bootstraps just the fallback
-script and its Stop hook. With the status line installed, a stood-down session
+by its OAuth API fallback otherwise (`statusline.rb --refresh-cache`, which
+guard.sh runs when the cache is stale). If it's installed, usage-guard reuses
+it; if not, the installer fetches `statusline.rb`. With the status line installed, a stood-down session
 says so live, ahead of everything else on its first line:
 
 ```
@@ -186,6 +192,7 @@ bother, leave it: with the checkpoint gone it just fires into a no-op.
 | `resume_grace_seconds` | `60` | Resume this many seconds after the reset. |
 | `windows` | `["5h", "7d"]` | Which limit windows to watch. |
 | `max_age_seconds` | `1800` | Reject the cache as `stale_cache` once it's older than this. |
+| `refresh_min_interval_seconds` | `900` | Minimum gap between `--refresh-cache` attempts, across all sessions. |
 
 Per-run overrides: `USAGE_GUARD_STOP_AT=80`, `USAGE_GUARD_MAX_AGE=3600`.
 

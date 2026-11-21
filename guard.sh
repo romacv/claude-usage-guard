@@ -2,8 +2,9 @@
 # usage-guard detector.
 #
 # Pure CONSUMER of the usage cache produced by claude-plan-usage-statusline
-# (its refresh-usage-cache.sh writes /tmp/claude_usage_cache.json from the
-# Anthropic OAuth usage API). This script never calls the API itself.
+# (statusline.rb writes /tmp/claude_usage_cache.json from Claude Code's stdin
+# on every render, or from the Anthropic OAuth usage API otherwise). This
+# script never calls the API itself.
 #
 # Prints a one-line JSON verdict on stdout and always exits 0:
 #   {"breach":false,...}
@@ -27,7 +28,7 @@ set -uo pipefail
 CACHE_FILE="${USAGE_GUARD_CACHE:-/tmp/claude_usage_cache.json}"
 CONFIG_FILE="${USAGE_GUARD_CONFIG:-$HOME/.claude/usage-guard/config.json}"
 
-ruby -rjson -rtime -e '
+ruby -rjson -rtime -rtimeout -e '
 cache, config = ARGV
 stop_env = ENV["USAGE_GUARD_STOP_AT"]
 max_age_env = ENV["USAGE_GUARD_MAX_AGE"]
@@ -43,16 +44,49 @@ stop_at   = {"5h" => stop5, "7d" => stop7}
 grace     = (cfg["resume_grace_seconds"] || 60).to_i
 windows   = cfg["windows"] || ["5h", "7d"]
 max_age   = (max_age_env || cfg["max_age_seconds"] || 1800).to_i
+refresh_every = (cfg["refresh_min_interval_seconds"] || 900).to_i
+producer  = File.expand_path("~/.claude/statusline.rb")
+stamp     = "#{cache}.refresh"
 
 def emit(h); puts JSON.generate(h); exit 0; end
 
-unless File.exist?(cache)
-  emit({"breach" => false, "reason" => "no_cache", "stop_at_remaining" => stop_at})
+cache_age = -> { File.exist?(cache) ? (Time.now - File.mtime(cache)).to_i : nil }
+
+refresh = nil
+age = cache_age.call
+if (age.nil? || age > max_age) && File.exist?(producer)
+  recent = File.exist?(stamp) && (Time.now - File.mtime(stamp)) < refresh_every
+  if recent
+    refresh = (File.read(stamp).strip rescue "")
+  else
+    File.write(stamp, "attempting") rescue nil
+    out = ""
+    io = nil
+    begin
+      io = IO.popen(["ruby", producer, "--refresh-cache", cache], err: File::NULL, pgroup: true)
+      out = Timeout.timeout(2) { io.read.to_s.strip }
+    rescue Timeout::Error
+      (Process.kill("KILL", -io.pid) rescue nil)
+      out = "timeout"
+    rescue StandardError
+      out = "error"
+    ensure
+      (io.close rescue nil)
+    end
+    refresh = out.match?(/\A[a-z0-9_]{1,24}\z/) ? out : "failed"
+    File.write(stamp, refresh) rescue nil
+  end
+  refresh = nil if refresh.empty?
+  age = cache_age.call
+end
+extra = refresh ? {"refresh" => refresh} : {}
+
+if age.nil?
+  emit({"breach" => false, "reason" => "no_cache", "stop_at_remaining" => stop_at}.merge(extra))
 end
 
-age = (Time.now - File.mtime(cache)).to_i
 if age > max_age
-  emit({"breach" => false, "reason" => "stale_cache", "age_seconds" => age, "stop_at_remaining" => stop_at})
+  emit({"breach" => false, "reason" => "stale_cache", "age_seconds" => age, "stop_at_remaining" => stop_at}.merge(extra))
 end
 
 data = (JSON.parse(File.read(cache)) rescue nil)

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # usage-guard uninstaller. Removes usage-guard's own files and its Stop hook.
-# Leaves refresh-usage-cache.sh and its Stop hook alone — that cache producer
+# Leaves statusline.rb alone — that cache producer
 # belongs to claude-plan-usage-statusline and may be in use by the status line.
 
 CLAUDE_DIR="$HOME/.claude"
