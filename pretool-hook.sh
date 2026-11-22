@@ -20,8 +20,10 @@
 set -uo pipefail
 
 DIR="$HOME/.claude/usage-guard"
-INPUT="$(cat 2>/dev/null)" # tool_input isn't needed; transcript_path is
+INPUT="$(cat 2>/dev/null)" # transcript_path, and subagent_type: Codex spends its own quota
 TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["transcript_path"] rescue "").to_s)' 2>/dev/null)"
+SUBAGENT_TYPE="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["tool_input"]["subagent_type"] rescue "").to_s)' 2>/dev/null)"
+case "$SUBAGENT_TYPE" in codex*) exit 0 ;; esac
 
 VERDICT="$("$DIR/guard.sh" 2>/dev/null)"
 [ -z "$VERDICT" ] && exit 0 # guard.sh missing or produced nothing: allow

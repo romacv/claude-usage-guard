@@ -14,13 +14,13 @@
 #   cancel.sh <session_id>   cancel that session's stand-down
 #   cancel.sh --all          cancel every session currently standing down
 #
-# The resume itself is a session-only cron the agent scheduled with CronCreate;
-# it lives in Claude's memory, not on disk, so this script cannot delete it — and
-# does not need to (a resume with no checkpoint aborts cleanly). It CAN, however,
-# surface the cron's id (the STANDDOWN protocol records it in the checkpoint as
-# resume_cron_id), so the owning window can CronDelete it precisely instead of
-# guessing. A session-only cron can only be removed from the window that made it;
-# from any other window, close that window to kill its cron.
+# The resume itself is a desktop scheduled task (delete_scheduled_task, works from
+# any session) or, in the terminal, a session-only cron (CronCreate, lives in
+# Claude's memory, CronDelete only from the window that made it). This script
+# cannot delete either — and does not need to (a resume with no checkpoint aborts
+# cleanly). It CAN surface the id (the STANDDOWN protocol records it in the
+# checkpoint as resume_cron_id, kind in resume_kind) so the right tool can delete
+# it precisely instead of guessing.
 set -uo pipefail
 
 DIR="$HOME/.claude/usage-guard"
@@ -48,7 +48,7 @@ cancel_one() {
   cid="$(cron_id_for "$safe")"
   rm -f "$DIR/standdown-$safe.json" "$DIR/resume-$safe.json"
   echo "cancelled $safe — state cleared"
-  [ -n "$cid" ] && echo "  its resume cron was $cid — CronDelete it from that window (session-only crons can't be removed cross-window)"
+  [ -n "$cid" ] && echo "  its resume job was $cid — a desktop scheduled task: delete_scheduled_task from any session; a terminal session-only cron: CronDelete from its window"
   return 0
 }
 
@@ -61,7 +61,7 @@ case "${1:-}" in
       echo "sessions currently standing down:"
       printf '%s\n' "$sids" | while IFS= read -r sid; do
         cid="$(cron_id_for "$sid")"
-        if [ -n "$cid" ]; then echo "  $sid   (resume cron: $cid)"; else echo "  $sid"; fi
+        if [ -n "$cid" ]; then echo "  $sid   (resume job: $cid)"; else echo "  $sid"; fi
       done
       echo "cancel one with:  cancel.sh <session_id>   (or --all)"
     fi

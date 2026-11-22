@@ -34,8 +34,8 @@ flowchart TD
     F --> G["lead runs the usage-guard skill · STANDDOWN"]
     G --> N1["PushNotification"]
     G --> R["checkpoint task + goal<br/>→ resume-&lt;session_id&gt;.json"]
-    G --> K["CronCreate one-shot<br/>at reset + grace"]
-    G --> S["lead STOPs — idle until cron"]
+    G --> K["one-shot resume at reset + grace<br/>(desktop scheduled task or CronCreate)"]
+    G --> S["lead STOPs — idle until the resume"]
 
     K -.fires after reset.-> Z["lead runs the usage-guard skill · RESUME"]
     Z --> N2["PushNotification"]
@@ -80,13 +80,17 @@ Where the correctness lives:
   `config.json` are global, because they are account-wide by nature.
 - **Self-resume without an OS scheduler.** `additionalContext` on the Stop hook
   continues the conversation exactly once, giving the lead a turn to stand down
-  and schedule a one-shot `CronCreate` for the reset. The lead then goes idle
-  until that single cron fires — no `/loop` to keep alive, nothing written into
-  the OS.
-- **Deterministic teardown.** `STANDDOWN` records the resume cron's id in the
-  checkpoint (`resume_cron_id`), so cancelling deletes the exact job instead of
-  guessing or depending on the id surviving a context compaction. The one hard
-  limit is the platform's: session-only crons can be removed only from the window
+  and schedule a one-shot resume for the reset. In the desktop app that is a
+  scheduled task (`create_scheduled_task`, stored on disk) that wakes the session
+  by message, because the app stops sessions idle for ~4 h and a session cron
+  dies with them; in the terminal it is a one-shot `CronCreate`. The lead then
+  goes idle until that single resume fires — no `/loop` to keep alive, nothing
+  written into the OS.
+- **Deterministic teardown.** `STANDDOWN` records the resume job's id and kind in
+  the checkpoint (`resume_cron_id`, `resume_kind`), so cancelling deletes the exact
+  job instead of guessing or depending on the id surviving a context compaction.
+  A scheduled task can be deleted from any session; the one hard limit is the
+  platform's: session-only crons can be removed only from the window
   that created them.
 - **One cache producer.** Detection reads the exact cache the status line already
   maintains; a stale cache (a session that draws no status line, such as the
@@ -154,8 +158,8 @@ nothing is written to the OS).
 Don't use `/goal` to hold a session until a fixed time. `/goal` is
 condition-based — it re-evaluates on every Stop-hook fire, so "wait until HH:MM"
 busy-loops the hook and burns quota every cycle. For a time-based hold, schedule a
-one-shot session cron with `CronCreate` (the same primitive usage-guard's own
-resume uses) and stay idle. Separately: `/goal clear` may surface one stale
+one-shot resume the way usage-guard's own resume does (a desktop scheduled task,
+or `CronCreate` in the terminal) and stay idle. Separately: `/goal clear` may surface one stale
 "Stop hook error" quoting the just-cleared condition afterward — that is Claude
 Code's own `/goal` internals, not usage-guard (its Stop hook always exits 0 and
 never reads or quotes goal state), and is harmless.
@@ -172,15 +176,17 @@ Changed your mind mid-pause? Cancel it:
 
 Cancel clears the session's marker + checkpoint (the status line pause disappears).
 Any resume already scheduled becomes a no-op — with the checkpoint gone, the
-`RESUME` protocol aborts when the cron fires. There is no mute: the guard stays
+`RESUME` protocol aborts when the resume fires. There is no mute: the guard stays
 armed, so if the session is still below the threshold the next Stop hook stands it
 down again. Cancel is durable only once the breach has actually passed.
 
-The resume itself is a session-only cron. `cancel.sh` prints its id (the
-`STANDDOWN` protocol records it in the checkpoint as `resume_cron_id`) so you can
-`CronDelete` it precisely — but only from the window that scheduled it, since
-session-only crons can't be removed from another window. If you'd rather not
-bother, leave it: with the checkpoint gone it just fires into a no-op.
+The resume itself is a desktop scheduled task or, in the terminal, a session-only
+cron. `cancel.sh` prints its id (the `STANDDOWN` protocol records it in the
+checkpoint as `resume_cron_id`, its kind as `resume_kind`) so you can delete it
+precisely: a scheduled task with `delete_scheduled_task` from any session, a
+session-only cron with `CronDelete` only from the window that scheduled it. If
+you'd rather not bother, leave it: with the checkpoint gone it just fires into a
+no-op.
 
 ## Configure
 

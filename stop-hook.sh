@@ -201,12 +201,17 @@ unless File.exist?(resume) || stop_active
       "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then ANSWER THIS FIRST — " \
       "does anything continue WITHOUT the User (an unfinished task, a build or job to read back, a queued next step)? " \
       "If NOTHING does — his last request is finished and the next move is his — schedule NO cron, checkpoint to " \
-      "#{resume} with resume_cron_id: null, delete #{marker}, and reply one line: paused, nothing queued. " \
-      "Only when work actually continues: if #{resume} already exists, CronDelete the resume_cron_id it names, then " \
-      "CronCreate a one-shot resume for ~1 min after the reset at #{resume_at} whose prompt runs the usage-guard " \
-      "RESUME protocol reading #{resume} and deleting #{resume} + #{marker} on completion, and checkpoint THIS " \
-      "session's in-progress task + goal to #{resume} (session-scoped — use exactly this path, never a shared one). " \
-      "Let running subagents finish; do not touch them. Then STOP and stay idle until the cron fires. " \
+      "#{resume} with resume_cron_id: null and resume_kind: null, delete #{marker}, and reply one line: paused, nothing queued. " \
+      "Only when work actually continues: if #{resume} already exists, delete the job its resume_cron_id names (resume_kind " \
+      "scheduled_task -> delete_scheduled_task, cron -> CronDelete), then schedule a one-shot resume for ~1 min after the reset " \
+      "at #{resume_at}: in the desktop app (mcp__scheduled-tasks available) create_scheduled_task with taskId " \
+      "usage-guard-resume-<first 8 chars of session_id>, fireAt = wake_at_iso + 1 min with UTC offset, whose self-contained " \
+      "prompt, if #{resume} is absent, stops, else sends 'Invoke the usage-guard skill and run its RESUME protocol.' to your own " \
+      "local_ id (mcp__ccd_session_mgmt__get_session self) via mcp__ccd_session_mgmt__send_message; in the terminal CronCreate a " \
+      "one-shot whose prompt runs the RESUME protocol. RESUME reads #{resume} and deletes #{resume} + #{marker} on completion. " \
+      "Checkpoint THIS session's in-progress task + goal to #{resume} with resume_cron_id and resume_kind " \
+      "(scheduled_task|cron) (session-scoped — use exactly this path, never a shared one). " \
+      "Let running subagents finish; do not touch them. Then STOP and stay idle until the resume fires. " \
       "Reply one line: paused, resume #{resume_at}."
   }
 end
