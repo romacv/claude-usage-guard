@@ -33,6 +33,7 @@ STOP_ACTIVE="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts(((JSON.parse(STDIN.re
 TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["transcript_path"] rescue "").to_s)' 2>/dev/null)"
 
 VERDICT="$VERDICT" SESSION_ID="$SESSION_ID" STOP_ACTIVE="$STOP_ACTIVE" TRANSCRIPT_PATH="$TRANSCRIPT_PATH" ruby -rjson <<'RUBY'
+# encoding: utf-8
 v = (JSON.parse(ENV["VERDICT"]) rescue {})
 dir = File.expand_path("~/.claude/usage-guard")
 stop_active = ENV["STOP_ACTIVE"] == "1"
