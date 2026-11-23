@@ -18,7 +18,7 @@ and resumes. New subagents are a separate gate: a `PreToolUse` hook on the
 `Agent` tool (`pretool-hook.sh`) refuses to spawn one while the same breach is
 active, so a dispatch can't keep spending after the lead has stood down.
 
-Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `breach`, `remaining_5h`, `remaining_7d`, `stop_at_remaining`, `window` — the breached window(s), `5h`/`7d`/`5h+7d` — `wake_at_epoch`, `wake_at_iso`, `seconds_until_wake`). A missing or stale cache makes it refresh once (see the last line); an unknown reading (`reason`: `no_cache`/`stale_cache`/...) carries the refresh outcome as `refresh` (`no_token`, `http_401`, `backoff`, `timeout`, ...) and is never a breach.
+Get fresh numbers any time with `bash ~/.claude/usage-guard/guard.sh` (JSON verdict: `breach`, `remaining_5h`, `remaining_7d`, `stop_at_remaining`, `window` — the breached window(s), `5h`/`7d`/`5h+7d` — `wake_at_epoch`, `wake_at_iso`, `seconds_until_wake`). A missing or stale cache makes it refresh once (see the last line); an unknown reading (`reason`: `no_cache`/`stale_cache`/...) carries the refresh outcome as `refresh` (`no_token`, `http_401`, `backoff`, `timeout`, ...) and is not a breach, except a stale cache whose enabled window already has remaining <= `stop_at_remaining` with `resetsAt` still in the future: that is a breach with `stale: true` and `age_seconds`. When that outcome is `http_*` or `backoff`, the Stop hook blocks once per 15 min per session and asks the lead to read `mcp__ccd_session_mgmt__get_usage` and stand down from its numbers.
 
 ## STANDDOWN — run once when the Stop hook flags a breach, then stop
 
@@ -72,4 +72,4 @@ same primitives usage-guard's own resume uses — and stay idle. Also: `/goal cl
 may surface one stale-condition Stop-hook error afterward (Claude Code internal,
 harmless).
 
-Never call the usage API directly — `guard.sh` reads the cache `claude-plan-usage-statusline` maintains and, when it is stale, runs that tool's own `statusline.rb --refresh-cache` (once per 15 min, token from `$CLAUDE_CODE_OAUTH_TOKEN`, `~/.agents/keys/claude-oauth-token` or the keychain).
+Never call the usage API directly — `guard.sh` reads the cache `claude-plan-usage-statusline` maintains and, when it is stale, runs that tool's own `statusline.rb --refresh-cache` (once per 5 min, token from `$CLAUDE_CODE_OAUTH_TOKEN`, `~/.agents/keys/claude-oauth-token` or the keychain).

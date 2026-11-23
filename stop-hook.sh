@@ -20,7 +20,10 @@
 # kind + id land in the marker and a native breach message is tagged (claude).
 #
 # The marker is cleared only on a DEFINITE no-breach; an unknown reading
-# (no_cache/bad_cache/no_data) leaves any active pause untouched. Never blocks.
+# (no_cache/stale_cache/bad_cache/no_data) leaves any active pause untouched.
+# It never blocks on a breach; on an unknown reading whose refresh failed
+# (http_*/backoff) it blocks once per 15 min per session, except a custom-model
+# session, asking the lead to read get_usage.
 set -uo pipefail
 
 DIR="$HOME/.claude/usage-guard"
@@ -70,13 +73,11 @@ Dir.glob(File.join(dir, "{standdown,resume}-*.json")).each do |f|
     # unparseable/garbage epoch — leave it rather than guess
   end
 end
-
-unless v["breach"]
-  File.delete(marker) if v["reason"].nil? && File.exist?(marker)
-  exit 0
+Dir.glob(File.join(dir, "blind-*.stamp")).each do |f|
+  File.delete(f) if File.mtime(f).to_i + 86_400 < now
+rescue StandardError
+  nil
 end
-
-v["by"] = "#{v["window"]} limit"
 
 # Which model served this session's latest response — the hook input carries
 # no model field, so read the session transcript's most recent non-sidechain
@@ -96,7 +97,7 @@ scan_entries = lambda do |lines|
   end
   nil
 end
-model_id =
+detect_model = lambda do
   begin
     tp = ENV["TRANSCRIPT_PATH"].to_s
     raise StandardError, "no transcript" if tp.empty? || !File.exist?(tp)
@@ -111,6 +112,29 @@ model_id =
   rescue StandardError
     nil
   end
+end
+unless v["breach"]
+  File.delete(marker) if v["reason"].nil? && File.exist?(marker)
+  blind = File.join(dir, "blind#{suffix}.stamp")
+  if v["reason"] && v["refresh"].to_s.match?(/\Ahttp_|\Abackoff\z/) && ENV["STOP_ACTIVE"] != "1" &&
+     (!File.exist?(blind) || File.mtime(blind).to_i + 900 < now)
+    blind_model = detect_model.()
+    unless blind_model && !blind_model.match?(/\Aclaude-/i)
+      File.write(blind, v["refresh"].to_s)
+      puts JSON.generate({
+        "decision" => "block",
+        "reason" => "usage-guard is blind (#{v["reason"]}, refresh #{v["refresh"]}). Call mcp__ccd_session_mgmt__get_usage once; " \
+                    "if the 5h window has <= #{v.dig("stop_at_remaining", "5h")}% left or the weekly one <= #{v.dig("stop_at_remaining", "7d")}%, " \
+                    "run the usage-guard STANDDOWN protocol with its numbers; otherwise stop with no reply."
+      })
+    end
+  end
+  exit 0
+end
+
+v["by"] = "#{v["window"]} limit"
+
+model_id = detect_model.()
 if model_id
   v["model_id"] = model_id.strip.gsub(/[[:cntrl:]]/, "")[0, 64]
   v["model_kind"] = model_id.match?(/\Aclaude-/i) ? "native" : "custom"

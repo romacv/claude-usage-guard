@@ -52,7 +52,7 @@ mid-task by the limit itself.
 | Component | Role |
 |-----------|------|
 | **`guard.sh`** | Reader of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API itself; a missing or stale cache makes it run `statusline.rb --refresh-cache` (2 s cap, at most once per `refresh_min_interval_seconds`) and report the outcome as `refresh`. |
-| **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill. |
+| **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill; on an unknown reading with a failed refresh (`http_*`/`backoff`) it blocks once per 15 min per session so the lead checks `get_usage`. |
 | **`pretool-hook.sh`** | On `PreToolUse` for the `Agent` tool: re-uses `guard.sh`'s verdict and denies the spawn on breach, with a reason the model won't retry in a loop. A session on a custom model is exempt — its spend never touches the plan. Allows on any other reading, including a failure to read the cache. |
 | **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
 | **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint so a pending resume becomes a no-op. There is no mute — the guard stays armed, so cancel is durable only once the breach has passed. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
@@ -65,7 +65,11 @@ Where the correctness lives:
   stale cache yields `breach:false` with a `reason` (`no_cache`, `bad_cache`,
   `no_data`, or `stale_cache` when the cache is older than `max_age_seconds`;
   a failed refresh adds `refresh`, e.g. `no_token`, `http_401`, `backoff`),
-  and the Stop hook leaves any active pause untouched. The spawn gate goes
+  and the Stop hook leaves any active pause untouched. The one exception: a
+  stale cache is a lower bound (utilization only grows until `resetsAt`), so
+  an enabled window in it that already has remaining <= `stop_at_remaining`
+  with `resetsAt` still in the future is a real breach, flagged `"stale": true`
+  with `age_seconds`. The spawn gate goes
   further: anything that stops it from
   reading a clean verdict — `guard.sh` missing, Ruby absent, unparseable
   output — also means allow. A monitor that halts your work because it
@@ -197,8 +201,8 @@ no-op.
 | `stop_at_remaining` | `{"5h": 13, "7d": 7}` | Stand down when a window's remaining headroom (%) falls to its value or below; a number sets both. |
 | `resume_grace_seconds` | `60` | Resume this many seconds after the reset. |
 | `windows` | `["5h", "7d"]` | Which limit windows to watch. |
-| `max_age_seconds` | `1800` | Reject the cache as `stale_cache` once it's older than this. |
-| `refresh_min_interval_seconds` | `900` | Minimum gap between `--refresh-cache` attempts, across all sessions. |
+| `max_age_seconds` | `300` | Reject the cache as `stale_cache` once it's older than this, unless a window in it already breached and has not reset (then a breach with `"stale": true`). |
+| `refresh_min_interval_seconds` | `300` | Minimum gap between `--refresh-cache` attempts, across all sessions. |
 
 Per-run overrides: `USAGE_GUARD_STOP_AT=80`, `USAGE_GUARD_MAX_AGE=3600`.
 

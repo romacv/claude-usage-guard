@@ -19,7 +19,10 @@
 # A cache older than max_age_seconds is treated as an unknown reading
 # (reason "stale_cache"), same as no_cache/bad_cache/no_data — the Stop hook
 # only clears an active stand-down when reason is nil, so staleness never
-# lifts a real pause on its own.
+# lifts a real pause on its own. Utilization only grows until resetsAt, so a
+# stale reading is a lower bound: when an enabled window in it already has
+# remaining <= stop_at and its resetsAt is still in the future, that is a
+# real breach, emitted with "stale":true and "age_seconds".
 #
 # Config precedence: $USAGE_GUARD_STOP_AT env (both windows) > config.json > built-in default (5h 13, 7d 7).
 # Same precedence applies to $USAGE_GUARD_MAX_AGE > config.json > built-in default.
@@ -43,8 +46,8 @@ stop7     = limits["7d"].to_f
 stop_at   = {"5h" => stop5, "7d" => stop7}
 grace     = (cfg["resume_grace_seconds"] || 60).to_i
 windows   = cfg["windows"] || ["5h", "7d"]
-max_age   = (max_age_env || cfg["max_age_seconds"] || 1800).to_i
-refresh_every = (cfg["refresh_min_interval_seconds"] || 900).to_i
+max_age   = (max_age_env || cfg["max_age_seconds"] || 300).to_i
+refresh_every = (cfg["refresh_min_interval_seconds"] || 300).to_i
 producer  = File.expand_path("~/.claude/statusline.rb")
 stamp     = "#{cache}.refresh"
 
@@ -85,12 +88,13 @@ if age.nil?
   emit({"breach" => false, "reason" => "no_cache", "stop_at_remaining" => stop_at}.merge(extra))
 end
 
-if age > max_age
-  emit({"breach" => false, "reason" => "stale_cache", "age_seconds" => age, "stop_at_remaining" => stop_at}.merge(extra))
-end
+stale = age > max_age
+stale_unknown = {"breach" => false, "reason" => "stale_cache", "age_seconds" => age, "stop_at_remaining" => stop_at}.merge(extra)
 
 data = (JSON.parse(File.read(cache)) rescue nil)
-emit({"breach" => false, "reason" => "bad_cache", "stop_at_remaining" => stop_at}) if data.nil?
+if data.nil?
+  emit(stale ? stale_unknown : {"breach" => false, "reason" => "bad_cache", "stop_at_remaining" => stop_at})
+end
 
 pick = ->(*keys) { keys.each { |k| return data[k] if data[k].is_a?(Hash) }; nil }
 util = ->(w) { w && (w["utilizationPercentage"] || w["utilization_percentage"] || w["utilization"]) }
@@ -108,22 +112,26 @@ rem7 = u7.nil? ? nil : (100 - u7.to_f)
 # hook leaves any active pause untouched instead of lifting it on a blip.
 readable = windows.map { |w| w == "5h" ? rem5 : (w == "7d" ? rem7 : nil) }.compact
 if readable.empty?
-  emit({"breach" => false, "reason" => "no_data", "remaining_5h" => rem5, "remaining_7d" => rem7, "stop_at_remaining" => stop_at})
+  emit(stale ? stale_unknown : {"breach" => false, "reason" => "no_data", "remaining_5h" => rem5, "remaining_7d" => rem7, "stop_at_remaining" => stop_at})
 end
 
+now = Time.now.to_i
+open_window = ->(r) { !stale || ((Time.parse(r.to_s).to_i rescue 0) > now) }
+
 breached = []
-if windows.include?("5h") && !rem5.nil? && rem5 <= stop5
+if windows.include?("5h") && !rem5.nil? && rem5 <= stop5 && open_window.(reset.(fh))
   breached << ["5h", rem5, reset.(fh), stop5]
 end
-if windows.include?("7d") && !rem7.nil? && rem7 <= stop7
+if windows.include?("7d") && !rem7.nil? && rem7 <= stop7 && open_window.(reset.(wk))
   breached << ["7d", rem7, reset.(wk), stop7]
 end
+
+emit(stale_unknown) if stale && breached.empty?
 
 if breached.empty?
   emit({"breach" => false, "remaining_5h" => rem5, "remaining_7d" => rem7, "stop_at_remaining" => stop_at})
 end
 
-now = Time.now.to_i
 resets = breached.map { |_, _, r, _| (Time.parse(r).to_i rescue nil) }.compact
 wake = (resets.empty? ? now : resets.max) + grace
 
@@ -136,5 +144,5 @@ emit({
   "wake_at_epoch" => wake,
   "wake_at_iso" => Time.at(wake).iso8601,
   "seconds_until_wake" => [wake - now, 0].max
-})
+}.merge(stale ? {"stale" => true, "age_seconds" => age} : {}))
 ' "$CACHE_FILE" "$CONFIG_FILE"
