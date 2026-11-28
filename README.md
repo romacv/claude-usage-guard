@@ -5,7 +5,7 @@ your five-hour headroom runs low, usage-guard stands the **lead session** down,
 sends a notification, and schedules an automatic resume one minute after the
 limit resets — then wakes and picks the work back up.
 
-Built entirely from Claude Code's own primitives — a **Stop hook** for detection,
+Built entirely from Claude Code's own primitives — a **Stop and PostToolUse hook** for detection,
 a **skill** for the stand-down / resume protocol, and a one-shot **cron** for the
 timed resume. No daemon, no OS scheduler, no background process to babysit.
 
@@ -25,7 +25,7 @@ reopens.** usage-guard encodes that discipline so the run does it on its own.
 flowchart TD
     P["claude-plan-usage-statusline<br/>statusline.rb"] -. writes cache .-> B
     B -. stale: statusline.rb --refresh-cache .-> P
-    A["Stop hook · after every lead response"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
+    A["Stop hook · after every lead response<br/>PostToolUse · after every lead tool call, on breach"] --> B["guard.sh reads<br/>/tmp/claude_usage_cache.json"]
     B --> C{"remaining ≤ stop_at_remaining?<br/>(per window)"}
     C -->|no| E["clear standdown marker"]
     C -->|yes, standdown already running| W["warn only<br/>(latched by the session's resume file)"]
@@ -52,7 +52,7 @@ mid-task by the limit itself.
 | Component | Role |
 |-----------|------|
 | **`guard.sh`** | Reader of the usage cache. Emits a JSON verdict (remaining, reset, wake time). Never calls the API itself; a missing or stale cache makes it run `statusline.rb --refresh-cache` (2 s cap, at most once per `refresh_min_interval_seconds`) and report the outcome as `refresh`. |
-| **`stop-hook.sh`** | On the Stop hook: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill; on an unknown reading with a failed refresh (`http_*`/`backoff`) it blocks once per 15 min per session so the lead checks `get_usage`. |
+| **`stop-hook.sh`** | On `Stop`, and on `PostToolUse` for lead tool calls once per breach episode so a long turn stands down before the hard limit ends it with no Stop: writes/clears the session-scoped `standdown-<session_id>.json` marker, warns, and — once per standdown — injects the directive that makes the lead run the skill; on an unknown reading with a failed refresh (`http_*`/`backoff`) it blocks once per 15 min per session so the lead checks `get_usage`. |
 | **`pretool-hook.sh`** | On `PreToolUse` for the `Agent` tool: re-uses `guard.sh`'s verdict and denies the spawn on breach, with a reason the model won't retry in a loop. A session on a custom model is exempt — its spend never touches the plan. Allows on any other reading, including a failure to read the cache. |
 | **`usage-guard` skill** | The `STANDDOWN`, `RESUME`, and `CANCEL` protocols the lead executes: notify, checkpoint, schedule and honor the resume cron, or abort a pending stand-down. |
 | **`cancel.sh`** | On-request cancel: clears a session's marker + checkpoint so a pending resume becomes a no-op. There is no mute — the guard stays armed, so cancel is durable only once the breach has passed. Surfaces the checkpoint's `resume_cron_id` so the owning window can `CronDelete` the job precisely. |
@@ -84,10 +84,12 @@ Where the correctness lives:
   `config.json` are global, because they are account-wide by nature.
 - **Self-resume without an OS scheduler.** `additionalContext` on the Stop hook
   continues the conversation exactly once, giving the lead a turn to stand down
-  and schedule a one-shot resume for the reset. In the desktop app that is a
+  and schedule a one-shot resume for the reset. The resume is scheduled on every
+  stand-down; RESUME ends silently when nothing is left. In the desktop app that is a
   scheduled task (`create_scheduled_task`, stored on disk) that wakes the session
   by message, because the app stops sessions idle for ~4 h and a session cron
-  dies with them; in the terminal it is a one-shot `CronCreate`. The lead then
+  dies with them; in the terminal, or when the scheduled task is refused, it is a
+  one-shot `CronCreate`. The lead then
   goes idle until that single resume fires — no `/loop` to keep alive, nothing
   written into the OS.
 - **Deterministic teardown.** `STANDDOWN` records the resume job's id and kind in
@@ -145,17 +147,17 @@ once the window has reset.
 curl -fsSL https://raw.githubusercontent.com/romacv/claude-usage-guard/main/install.sh | sh
 ```
 
-Restart Claude Code so the Stop hook, spawn gate, and skill load.
+Restart Claude Code so the hooks, spawn gate, and skill load.
 
 ## Use
 
-Nothing to invoke. Run your work as usual. The Stop hook watches headroom after
-every response; when it crosses the threshold the lead automatically notifies,
+Nothing to invoke. Run your work as usual. The hook watches headroom after
+every response and every tool call; when it crosses the threshold the lead automatically notifies,
 stands itself down, checkpoints, and schedules the resume. One minute after the
 5h limit resets the cron fires and the lead continues from where it stood down.
 
-The lead's session must stay open for the resume cron to fire (it is session-only,
-nothing is written to the OS).
+In the terminal the session must stay open for the resume cron to fire (it is
+session-only, nothing is written to the OS).
 
 ## Anti-patterns
 
@@ -221,7 +223,7 @@ For production, keep tight limits (e.g. `{"5h": 13, "7d": 7}`).
 curl -fsSL https://raw.githubusercontent.com/romacv/claude-usage-guard/main/uninstall.sh | sh
 ```
 
-Removes usage-guard, its skill, its Stop hook, and its spawn gate; leaves the
+Removes usage-guard, its skill, its hooks, and its spawn gate; leaves the
 shared cache producer in place.
 
 ## License

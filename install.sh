@@ -78,6 +78,19 @@ unless has_pretool_command?(pretool, "usage-guard/pretool-hook.sh")
   }
 end
 
+settings["hooks"]["PostToolUse"] ||= []
+posttool = settings["hooks"]["PostToolUse"]
+unless has_command?(posttool, "usage-guard/stop-hook.sh")
+  posttool << {
+    "matcher" => "",
+    "hooks" => [{
+      "type"    => "command",
+      "command" => "bash $HOME/.claude/usage-guard/stop-hook.sh",
+      "timeout" => 5
+    }]
+  }
+end
+
 File.write(settings_path, JSON.pretty_generate(settings))
 RUBY
 
@@ -87,5 +100,6 @@ echo "  config:      $GUARD_DIR/config.json  (stop_at_remaining, windows)"
 echo "  skill:       $SKILL_DIR/SKILL.md     (STANDDOWN + RESUME + CANCEL protocol)"
 echo "  cancel:      $GUARD_DIR/cancel.sh      (cancel a pending stand-down/resume)"
 echo "  spawn gate:  $GUARD_DIR/pretool-hook.sh (refuses new subagents on breach)"
+echo "  mid-turn:    $GUARD_DIR/stop-hook.sh on PostToolUse (stands down before the hard limit)"
 echo "The Stop hook detects low quota and drives the skill automatically."
 echo "Restart Claude Code to apply the hooks."

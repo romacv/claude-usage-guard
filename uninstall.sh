@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# usage-guard uninstaller. Removes usage-guard's own files and its Stop hook.
+# usage-guard uninstaller. Removes usage-guard's own files and its hooks.
 # Leaves statusline.rb alone — that cache producer
 # belongs to claude-plan-usage-statusline and may be in use by the status line.
 
@@ -28,6 +28,12 @@ if settings.dig("hooks", "PreToolUse")
     (entry["hooks"] || []).any? { |h| h["command"].to_s.include?("usage-guard/pretool-hook.sh") }
   end
   settings["hooks"].delete("PreToolUse") if settings["hooks"]["PreToolUse"].empty?
+end
+if settings.dig("hooks", "PostToolUse")
+  settings["hooks"]["PostToolUse"].reject! do |entry|
+    (entry["hooks"] || []).any? { |h| h["command"].to_s.include?("usage-guard/stop-hook.sh") }
+  end
+  settings["hooks"].delete("PostToolUse") if settings["hooks"]["PostToolUse"].empty?
 end
 settings.delete("hooks") if settings["hooks"] && settings["hooks"].empty?
 

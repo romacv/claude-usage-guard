@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# usage-guard Stop hook.
+# usage-guard Stop and PostToolUse hook.
 #
-# Runs after each lead response. Reads the usage verdict and:
+# Runs after each lead response (Stop) and after each lead tool call
+# (PostToolUse, breach only, once per breach episode, so a long turn stands
+# down before the hard limit cuts it). Reads the usage verdict and:
 #   - no breach (real reading): clears any stale standdown marker;
 #   - breach, standdown NOT yet in progress (no resume.json): writes the marker,
 #     warns, and injects a directive telling the lead to run the usage-guard
@@ -31,15 +33,25 @@ INPUT="$(cat 2>/dev/null)"
 VERDICT="$("$DIR/guard.sh" 2>/dev/null)"
 [ -z "$VERDICT" ] && exit 0
 
+EVENT=Stop
+if printf '%s' "$INPUT" | grep -Eq '"hook_event_name"[[:space:]]*:[[:space:]]*"PostToolUse"'; then
+  EVENT=PostToolUse
+  case "$VERDICT" in *'"breach":true'*) ;; *) exit 0 ;; esac
+  AGENT_ID="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["agent_id"] rescue "").to_s)' 2>/dev/null)"
+  [ -n "$AGENT_ID" ] && exit 0
+fi
+
 SESSION_ID="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["session_id"] rescue "").to_s)' 2>/dev/null)"
 STOP_ACTIVE="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts(((JSON.parse(STDIN.read)["stop_hook_active"] rescue false) == true) ? "1" : "0")' 2>/dev/null)"
 TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | ruby -rjson -e 'puts((JSON.parse(STDIN.read)["transcript_path"] rescue "").to_s)' 2>/dev/null)"
 
-VERDICT="$VERDICT" SESSION_ID="$SESSION_ID" STOP_ACTIVE="$STOP_ACTIVE" TRANSCRIPT_PATH="$TRANSCRIPT_PATH" ruby -rjson <<'RUBY'
+VERDICT="$VERDICT" EVENT="$EVENT" SESSION_ID="$SESSION_ID" STOP_ACTIVE="$STOP_ACTIVE" TRANSCRIPT_PATH="$TRANSCRIPT_PATH" ruby -rjson <<'RUBY'
 # encoding: utf-8
 v = (JSON.parse(ENV["VERDICT"]) rescue {})
 dir = File.expand_path("~/.claude/usage-guard")
 stop_active = ENV["STOP_ACTIVE"] == "1"
+event = ENV["EVENT"] == "PostToolUse" ? "PostToolUse" : "Stop"
+post = event == "PostToolUse"
 
 # Session-scope the state so concurrent Claude Code sessions never share one
 # marker/roster. session_id keys the files so each session gets its own state;
@@ -73,7 +85,7 @@ Dir.glob(File.join(dir, "{standdown,resume}-*.json")).each do |f|
     # unparseable/garbage epoch — leave it rather than guess
   end
 end
-Dir.glob(File.join(dir, "blind-*.stamp")).each do |f|
+Dir.glob(File.join(dir, "{blind,nudge}-*.stamp")).each do |f|
   File.delete(f) if File.mtime(f).to_i + 86_400 < now
 rescue StandardError
   nil
@@ -153,6 +165,14 @@ if v["model_kind"] == "custom"
   exit 0
 end
 
+if post
+  exit 0 if File.exist?(resume)
+  nudge = File.join(dir, "nudge#{suffix}.stamp")
+  episode = v["wake_at_epoch"].to_i.to_s
+  exit 0 if File.exist?(nudge) && File.read(nudge).strip == episode
+  File.write(nudge, episode)
+end
+
 # Breach messages only ever fire for native/unknown sessions now — custom
 # stands aside above — so the tag names the only kind that can pause.
 tag = v["model_kind"] == "native" ? " (claude)" : ""
@@ -178,7 +198,7 @@ if File.exist?(resume)
   %w[base_wake_at_epoch wake_at_epoch wake_at_iso].each { |k| v[k] = prev[k] if prev[k] }
 else
   # Pre-stand-down: deferral push (+5 min per genuine ignored breach warning).
-  can_defer = File.exist?(marker) && !stop_active &&
+  can_defer = !post && File.exist?(marker) && !stop_active &&
               (now - prev["last_deferral_epoch"].to_i >= 300)
   deferrals = prev["deferrals"].to_i + (can_defer ? 1 : 0)
   base = v["wake_at_epoch"].to_i
@@ -219,23 +239,23 @@ out = {
 # resume.json is the latch (written by STANDDOWN, removed by RESUME); stop_active
 # brakes self-amplification on a hook-continued turn.
 unless File.exist?(resume) || stop_active
+  File.write(File.join(dir, "nudge#{suffix}.stamp"), v["base_wake_at_epoch"].to_i.to_s) unless post
   out["hookSpecificOutput"] = {
-    "hookEventName" => "Stop",
+    "hookEventName" => event,
     "additionalContext" =>
       "usage-guard BREACH: #{label} headroom #{pct.(brem)}% <= #{pct.(v["stop_at_remaining"])}% limit#{tag}. " \
-      "Invoke the usage-guard skill and run its STANDDOWN protocol NOW: PushNotification, then ANSWER THIS FIRST — " \
-      "does anything continue WITHOUT the User (an unfinished task, a build or job to read back, a queued next step)? " \
-      "If NOTHING does — his last request is finished and the next move is his — schedule NO cron, checkpoint to " \
-      "#{resume} with resume_cron_id: null and resume_kind: null, delete #{marker}, and reply one line: paused, nothing queued. " \
-      "Only when work actually continues: if #{resume} already exists, delete the job its resume_cron_id names (resume_kind " \
-      "scheduled_task -> delete_scheduled_task, cron -> CronDelete), then schedule a one-shot resume for ~1 min after the reset " \
-      "at #{resume_at}: in the desktop app (mcp__scheduled-tasks available) create_scheduled_task with taskId " \
+      "Invoke the usage-guard skill and run its STANDDOWN protocol NOW, before any other work: PushNotification, then " \
+      "ALWAYS schedule the resume, even when you think nothing is left (RESUME ends silently on an empty lead_task). " \
+      "If #{resume} already exists, delete the job its resume_cron_id names (resume_kind scheduled_task -> " \
+      "delete_scheduled_task, cron -> CronDelete). Schedule a one-shot resume for ~1 min after the reset at #{resume_at}: " \
+      "in the desktop app (mcp__scheduled-tasks available) create_scheduled_task with taskId " \
       "usage-guard-resume-<first 8 chars of session_id>, fireAt = wake_at_iso + 1 min with UTC offset, whose self-contained " \
       "prompt, if #{resume} is absent, stops, else sends 'Invoke the usage-guard skill and run its RESUME protocol.' to your own " \
-      "local_ id (mcp__ccd_session_mgmt__get_session self) via mcp__ccd_session_mgmt__send_message; in the terminal CronCreate a " \
-      "one-shot whose prompt runs the RESUME protocol. RESUME reads #{resume} and deletes #{resume} + #{marker} on completion. " \
-      "Checkpoint THIS session's in-progress task + goal to #{resume} with resume_cron_id and resume_kind " \
-      "(scheduled_task|cron) (session-scoped — use exactly this path, never a shared one). " \
+      "local_ id (mcp__ccd_session_mgmt__get_session self) via mcp__ccd_session_mgmt__send_message; if that tool is missing, " \
+      "refused or errors, and in the terminal, CronCreate a one-shot (recurring: false) whose prompt runs the RESUME protocol. " \
+      "Checkpoint to #{resume} (session-scoped, exactly this path) with goal, wake_at_epoch, resume_cron_id, resume_kind " \
+      "(scheduled_task|cron), resume_retries 0 and lead_task: your unfinished work in full, or an empty string when his last " \
+      "request is finished. RESUME reads #{resume} and deletes #{resume} + #{marker} on completion. " \
       "Let running subagents finish; do not touch them. Then STOP and stay idle until the resume fires. " \
       "Reply one line: paused, resume #{resume_at}."
   }
